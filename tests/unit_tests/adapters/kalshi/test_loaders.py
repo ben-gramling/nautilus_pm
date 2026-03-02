@@ -82,6 +82,22 @@ def make_mock_response(body: dict | list, status: int = 200):
     return mock
 
 
+def make_trade_dict(
+    ts: int = 1700000000,
+    yes_price: str = "0.4200",
+    count: str = "10.00",
+    taker_side: str = "yes",
+) -> dict:
+    no_price = f"{1 - float(yes_price):.4f}"
+    return {
+        "ts": ts,
+        "yes_price": yes_price,
+        "no_price": no_price,
+        "count": count,
+        "taker_side": taker_side,
+    }
+
+
 @pytest.mark.asyncio
 async def test_from_market_ticker_returns_loader():
     ticker = "KXBTC-25MAR15-B100000"
@@ -118,3 +134,34 @@ async def test_from_market_ticker_raises_on_server_error():
 
     with pytest.raises(RuntimeError, match="HTTP request failed"):
         await KalshiDataLoader.from_market_ticker("KXBTC-25MAR15-B100000", http_client=mock_client)
+
+
+@pytest.mark.asyncio
+async def test_fetch_trades_single_page():
+    instrument = make_instrument()
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(
+        return_value=make_mock_response({"trades": [make_trade_dict()], "cursor": ""})
+    )
+    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+
+    trades = await loader.fetch_trades()
+
+    assert len(trades) == 1
+    assert trades[0]["ts"] == 1700000000
+    mock_client.get.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_fetch_trades_paginates():
+    instrument = make_instrument()
+    mock_client = MagicMock()
+    page1 = make_mock_response({"trades": [make_trade_dict(ts=1)], "cursor": "abc"})
+    page2 = make_mock_response({"trades": [make_trade_dict(ts=2)], "cursor": ""})
+    mock_client.get = AsyncMock(side_effect=[page1, page2])
+    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+
+    trades = await loader.fetch_trades()
+
+    assert len(trades) == 2
+    assert mock_client.get.call_count == 2

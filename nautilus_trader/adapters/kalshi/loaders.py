@@ -157,3 +157,63 @@ class KalshiDataLoader:
         instrument = _market_dict_to_instrument(market)
 
         return cls(instrument=instrument, http_client=client)
+
+    async def fetch_trades(
+        self,
+        min_ts: int | None = None,
+        max_ts: int | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """
+        Fetch historical trades from the Kalshi API.
+
+        Automatically paginates using cursor-based pagination until all
+        trades are retrieved.
+
+        Parameters
+        ----------
+        min_ts : int, optional
+            Minimum Unix timestamp in seconds (inclusive).
+        max_ts : int, optional
+            Maximum Unix timestamp in seconds (inclusive).
+        limit : int, default 1000
+            Number of trades per page (Kalshi maximum is 1000).
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Raw trade dicts as returned by the Kalshi API.
+        """
+        ticker = self._instrument.id.symbol.value
+        all_trades: list[dict[str, Any]] = []
+        cursor: str | None = None
+
+        while True:
+            params: dict[str, Any] = {"limit": str(limit)}
+            if min_ts is not None:
+                params["min_ts"] = str(min_ts)
+            if max_ts is not None:
+                params["max_ts"] = str(max_ts)
+            if cursor:
+                params["cursor"] = cursor
+
+            response = await self._http_client.get(
+                url=f"{KALSHI_REST_BASE}/historical/markets/{ticker}/trades",
+                params=params,
+            )
+
+            if response.status != 200:
+                raise RuntimeError(
+                    f"HTTP request failed with status {response.status}: "
+                    f"{response.body.decode('utf-8')}",
+                )
+
+            data = msgspec.json.decode(response.body)
+            page_trades = data.get("trades", [])
+            all_trades.extend(page_trades)
+
+            cursor = data.get("cursor") or None
+            if not cursor or not page_trades:
+                break
+
+        return all_trades
