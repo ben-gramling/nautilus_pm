@@ -49,10 +49,10 @@ from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
 # ---------------------------------------------------------------------------
 # Configure these constants for your backtest
 # ---------------------------------------------------------------------------
-MARKET_TICKER = "KXRT-PRO-45"        # Kalshi market ticker
+MARKET_TICKER = "KXFEDCHAIRNOM-29-KW"        # Kalshi market ticker
 BAR_INTERVAL = "Hours1"           # Minutes1 | Hours1 | Days1
 CATALOG_PATH = "./kalshi_catalog"  # Local directory for parquet catalog
-START = "2026-02-25"               # ISO 8601 UTC date string
+START = "2026-01-01"               # ISO 8601 UTC date string
 END = "2026-03-01"                 # ISO 8601 UTC exclusive end date
 FAST_EMA = 10
 SLOW_EMA = 20
