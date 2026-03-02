@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 
 import msgspec
+import pandas as pd
 import pytest
 
 from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader
@@ -195,3 +196,47 @@ def test_parse_trades_unknown_side_gives_no_aggressor():
     ticks = loader.parse_trades(raw)
 
     assert ticks[0].aggressor_side == AggressorSide.NO_AGGRESSOR
+
+
+@pytest.mark.asyncio
+async def test_load_trades_filters_by_time_range():
+    instrument = make_instrument()
+    mock_client = MagicMock()
+    raw = [
+        make_trade_dict(ts=1000),   # before start
+        make_trade_dict(ts=2000),   # in range
+        make_trade_dict(ts=3000),   # after end
+    ]
+    mock_client.get = AsyncMock(
+        return_value=make_mock_response({"trades": raw, "cursor": ""})
+    )
+    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+
+    # start=ts 1000 (inclusive), end=ts 2000 (inclusive)
+    start = pd.Timestamp(1000, unit="s", tz="UTC")
+    end = pd.Timestamp(2000, unit="s", tz="UTC")
+
+    ticks = await loader.load_trades(start=start, end=end)
+
+    ts_seconds = [t.ts_event // 1_000_000_000 for t in ticks]
+    assert all(1000 <= ts <= 2000 for ts in ts_seconds)
+
+
+@pytest.mark.asyncio
+async def test_load_trades_sorted_chronologically():
+    instrument = make_instrument()
+    mock_client = MagicMock()
+    raw = [
+        make_trade_dict(ts=3000),
+        make_trade_dict(ts=1000),
+        make_trade_dict(ts=2000),
+    ]
+    mock_client.get = AsyncMock(
+        return_value=make_mock_response({"trades": raw, "cursor": ""})
+    )
+    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+
+    ticks = await loader.load_trades()
+
+    ts_values = [t.ts_event for t in ticks]
+    assert ts_values == sorted(ts_values)

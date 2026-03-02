@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 import msgspec
+import pandas as pd
 
 from nautilus_trader.adapters.kalshi.providers import KALSHI_REST_BASE
 from nautilus_trader.core import nautilus_pyo3
@@ -270,3 +271,41 @@ class KalshiDataLoader:
             )
 
         return trades
+
+    async def load_trades(
+        self,
+        start: pd.Timestamp | None = None,
+        end: pd.Timestamp | None = None,
+    ) -> list[TradeTick]:
+        """
+        Load, parse, and sort trade ticks.
+
+        Fetches all historical trades for this instrument, optionally filtering
+        by time range, then sorts chronologically.
+
+        Parameters
+        ----------
+        start : pd.Timestamp, optional
+            Inclusive lower bound (timezone-aware). If ``None``, no lower bound.
+        end : pd.Timestamp, optional
+            Inclusive upper bound (timezone-aware). If ``None``, no upper bound.
+
+        Returns
+        -------
+        list[TradeTick]
+            Trade ticks sorted chronologically.
+        """
+        min_ts = int(start.timestamp()) if start is not None else None
+        max_ts = int(end.timestamp()) if end is not None else None
+
+        raw_trades = await self.fetch_trades(min_ts=min_ts, max_ts=max_ts)
+
+        # Client-side filter (API may return boundary-inclusive extras)
+        if min_ts is not None:
+            raw_trades = [t for t in raw_trades if t["ts"] >= min_ts]
+        if max_ts is not None:
+            raw_trades = [t for t in raw_trades if t["ts"] <= max_ts]
+
+        raw_trades.sort(key=lambda t: t["ts"])
+
+        return self.parse_trades(raw_trades)
