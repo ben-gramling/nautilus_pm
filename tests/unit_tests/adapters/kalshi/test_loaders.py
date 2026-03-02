@@ -107,3 +107,14 @@ async def test_from_market_ticker_raises_on_404():
 
     with pytest.raises(ValueError, match="not found"):
         await KalshiDataLoader.from_market_ticker("NONEXISTENT", http_client=mock_client)
+
+
+@pytest.mark.asyncio
+async def test_from_market_ticker_raises_on_server_error():
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(
+        return_value=make_mock_response({"error": "internal"}, status=500)
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP request failed"):
+        await KalshiDataLoader.from_market_ticker("KXBTC-25MAR15-B100000", http_client=mock_client)
