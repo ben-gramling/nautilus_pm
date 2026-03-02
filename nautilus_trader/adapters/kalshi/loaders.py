@@ -17,9 +17,9 @@ Provides a data loader for historical Kalshi prediction market data.
 
 from __future__ import annotations
 
-from nautilus_trader.adapters.kalshi.providers import KALSHI_REST_BASE
 from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.model.instruments import BinaryOption
+
 
 KALSHI_HTTP_RATE_LIMIT_RPS = 20  # Basic tier
 

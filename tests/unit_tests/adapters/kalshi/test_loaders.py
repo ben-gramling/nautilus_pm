@@ -15,13 +15,15 @@
 import decimal
 from unittest.mock import MagicMock
 
-import pytest
-
 from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader
 from nautilus_trader.model.enums import AssetClass
-from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import Symbol
+from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.model.instruments import BinaryOption
-from nautilus_trader.model.objects import Currency, Price, Quantity
+from nautilus_trader.model.objects import Currency
+from nautilus_trader.model.objects import Price
+from nautilus_trader.model.objects import Quantity
 
 
 def make_instrument() -> BinaryOption:
@@ -37,8 +39,8 @@ def make_instrument() -> BinaryOption:
         size_precision=2,
         price_increment=Price.from_str("0.0001"),
         size_increment=Quantity.from_str("0.01"),
-        maker_fee=decimal.Decimal("0"),
-        taker_fee=decimal.Decimal("0"),
+        maker_fee=decimal.Decimal(0),
+        taker_fee=decimal.Decimal(0),
         outcome="Yes",
         description="Test market",
         ts_event=0,
