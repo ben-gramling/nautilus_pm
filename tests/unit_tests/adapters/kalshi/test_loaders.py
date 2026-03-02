@@ -20,6 +20,8 @@ import msgspec
 import pytest
 
 from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader
+from nautilus_trader.model.data import TradeTick
+from nautilus_trader.model.enums import AggressorSide
 from nautilus_trader.model.enums import AssetClass
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import Symbol
@@ -165,3 +167,31 @@ async def test_fetch_trades_paginates():
 
     assert len(trades) == 2
     assert mock_client.get.call_count == 2
+
+
+def test_parse_trades_returns_trade_ticks():
+    instrument = make_instrument()
+    loader = KalshiDataLoader(instrument=instrument, http_client=MagicMock())
+
+    raw = [
+        make_trade_dict(ts=1700000000, yes_price="0.4200", count="10.00", taker_side="yes"),
+        make_trade_dict(ts=1700000001, yes_price="0.5000", count="5.00", taker_side="no"),
+    ]
+    ticks = loader.parse_trades(raw)
+
+    assert len(ticks) == 2
+    assert isinstance(ticks[0], TradeTick)
+    assert ticks[0].aggressor_side == AggressorSide.BUYER
+    assert ticks[1].aggressor_side == AggressorSide.SELLER
+    # Timestamp: 1700000000 seconds → nanoseconds
+    assert ticks[0].ts_event == 1700000000 * 1_000_000_000
+
+
+def test_parse_trades_unknown_side_gives_no_aggressor():
+    instrument = make_instrument()
+    loader = KalshiDataLoader(instrument=instrument, http_client=MagicMock())
+
+    raw = [make_trade_dict(taker_side="unknown")]
+    ticks = loader.parse_trades(raw)
+
+    assert ticks[0].aggressor_side == AggressorSide.NO_AGGRESSOR

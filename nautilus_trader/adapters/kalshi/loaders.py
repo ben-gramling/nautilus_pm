@@ -23,6 +23,10 @@ import msgspec
 
 from nautilus_trader.adapters.kalshi.providers import KALSHI_REST_BASE
 from nautilus_trader.core import nautilus_pyo3
+from nautilus_trader.core.datetime import secs_to_nanos
+from nautilus_trader.model.data import TradeTick
+from nautilus_trader.model.enums import AggressorSide
+from nautilus_trader.model.identifiers import TradeId
 from nautilus_trader.model.instruments import BinaryOption
 
 
@@ -217,3 +221,52 @@ class KalshiDataLoader:
                 break
 
         return all_trades
+
+    def parse_trades(
+        self,
+        trades_data: list[dict[str, Any]],
+    ) -> list[TradeTick]:
+        """
+        Parse raw Kalshi trade dicts into TradeTick objects.
+
+        Parameters
+        ----------
+        trades_data : list[dict[str, Any]]
+            Raw trade dicts from the Kalshi historical trades API.
+
+        Returns
+        -------
+        list[TradeTick]
+        """
+        ticker = self._instrument.id.symbol.value
+        instrument_id = self._instrument.id
+        make_price = self._instrument.make_price
+        make_qty = self._instrument.make_qty
+        trades: list[TradeTick] = []
+
+        for trade in trades_data:
+            ts_event = secs_to_nanos(trade["ts"])
+            taker_side = trade.get("taker_side", "")
+            if taker_side == "yes":
+                aggressor_side = AggressorSide.BUYER
+            elif taker_side == "no":
+                aggressor_side = AggressorSide.SELLER
+            else:
+                aggressor_side = AggressorSide.NO_AGGRESSOR
+
+            raw_id = f"{ticker}_{trade['ts']}_{trade['yes_price']}_{trade['count']}"
+            trade_id = TradeId(raw_id[:36])
+
+            trades.append(
+                TradeTick(
+                    instrument_id=instrument_id,
+                    price=make_price(trade["yes_price"]),
+                    size=make_qty(trade["count"]),
+                    aggressor_side=aggressor_side,
+                    trade_id=trade_id,
+                    ts_event=ts_event,
+                    ts_init=ts_event,
+                )
+            )
+
+        return trades
