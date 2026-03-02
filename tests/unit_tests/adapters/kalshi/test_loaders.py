@@ -325,3 +325,44 @@ def test_parse_candlesticks_invalid_interval_raises():
 
     with pytest.raises(ValueError, match="Invalid interval"):
         loader.parse_candlesticks([], interval="Ticks1")
+
+
+@pytest.mark.asyncio
+async def test_load_bars_returns_sorted_bars():
+    instrument = make_instrument()
+    mock_client = MagicMock()
+    candles = [
+        make_candle_dict(end_ts=3000),
+        make_candle_dict(end_ts=1000),
+        make_candle_dict(end_ts=2000),
+    ]
+    mock_client.get = AsyncMock(
+        return_value=make_mock_response({"candlesticks": candles})
+    )
+    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+
+    bars = await loader.load_bars()
+
+    ts_values = [b.ts_event for b in bars]
+    assert ts_values == sorted(ts_values)
+    assert len(bars) == 3
+
+
+@pytest.mark.asyncio
+async def test_load_bars_passes_time_range_and_interval():
+    instrument = make_instrument()
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(
+        return_value=make_mock_response({"candlesticks": []})
+    )
+    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    end = pd.Timestamp("2024-01-31", tz="UTC")
+    await loader.load_bars(start=start, end=end, interval="Hours1")
+
+    call_kwargs = mock_client.get.call_args
+    params = call_kwargs.kwargs["params"]
+    assert params["start_ts"] == str(int(start.timestamp()))
+    assert params["end_ts"] == str(int(end.timestamp()))
+    assert params["period_interval"] == "60"

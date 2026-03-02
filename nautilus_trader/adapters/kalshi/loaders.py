@@ -408,6 +408,41 @@ class KalshiDataLoader:
 
         return bars
 
+    async def load_bars(
+        self,
+        start: pd.Timestamp | None = None,
+        end: pd.Timestamp | None = None,
+        interval: str = "Minutes1",
+    ) -> list[Bar]:
+        """
+        Load, parse, and sort bars (OHLCV candlesticks).
+
+        Parameters
+        ----------
+        start : pd.Timestamp, optional
+            Inclusive start time (timezone-aware).
+        end : pd.Timestamp, optional
+            Inclusive end time (timezone-aware).
+        interval : str, default "Minutes1"
+            Candlestick interval. One of ``"Minutes1"``, ``"Hours1"``, ``"Days1"``.
+
+        Returns
+        -------
+        list[Bar]
+            Bars sorted chronologically.
+        """
+        start_ts = int(start.timestamp()) if start is not None else None
+        end_ts = int(end.timestamp()) if end is not None else None
+
+        raw_candles = await self.fetch_candlesticks(
+            start_ts=start_ts,
+            end_ts=end_ts,
+            interval=interval,
+        )
+        raw_candles.sort(key=lambda c: c["end_period_ts"])
+
+        return self.parse_candlesticks(raw_candles, interval=interval)
+
     async def load_trades(
         self,
         start: pd.Timestamp | None = None,
