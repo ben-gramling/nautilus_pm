@@ -138,7 +138,9 @@ class KalshiDataLoader:
         data = msgspec.json.decode(response.body)
         market = data["market"]
         instrument = _market_dict_to_instrument(market)
-        series_ticker = market["series_ticker"]
+        # series_ticker is the prefix of event_ticker before the first hyphen
+        # (e.g. event_ticker "KXBTC-25MAR15" → series_ticker "KXBTC")
+        series_ticker = market["event_ticker"].split("-")[0]
 
         return cls(instrument=instrument, series_ticker=series_ticker, http_client=client)
 

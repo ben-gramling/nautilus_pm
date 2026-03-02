@@ -72,7 +72,7 @@ def test_init_creates_default_http_client():
 def make_market_dict(ticker: str = "KXBTC-25MAR15-B100000") -> dict:
     return {
         "ticker": ticker,
-        "series_ticker": "KXBTC",
+        "event_ticker": "KXBTC-25MAR15",
         "title": "BTC above 100k on March 15?",
         "open_time": "2025-01-01T00:00:00Z",
         "close_time": "2025-03-15T00:00:00Z",
