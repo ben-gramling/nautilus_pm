@@ -80,6 +80,10 @@ def make_market_dict(ticker: str = "KXBTC-25MAR15-B100000") -> dict:
     }
 
 
+def make_event_dict(series_ticker: str = "KXBTC") -> dict:
+    return {"event": {"series_ticker": series_ticker, "event_ticker": "KXBTC-25MAR15"}}
+
+
 def make_mock_response(body: dict | list, status: int = 200):
     mock = MagicMock()
     mock.status = status
@@ -123,16 +127,20 @@ def make_trade_dict(
 @pytest.mark.asyncio
 async def test_from_market_ticker_returns_loader():
     ticker = "KXBTC-25MAR15-B100000"
-    market = make_market_dict(ticker)
     mock_client = MagicMock()
-    mock_client.get = AsyncMock(return_value=make_mock_response({"market": market}))
+    mock_client.get = AsyncMock(
+        side_effect=[
+            make_mock_response({"market": make_market_dict(ticker)}),
+            make_mock_response(make_event_dict("KXBTC")),
+        ]
+    )
 
     loader = await KalshiDataLoader.from_market_ticker(ticker, http_client=mock_client)
 
     assert isinstance(loader, KalshiDataLoader)
     assert loader.instrument.id.symbol.value == ticker
     assert loader._series_ticker == "KXBTC"
-    mock_client.get.assert_called_once()
+    assert mock_client.get.call_count == 2
 
 
 @pytest.mark.asyncio

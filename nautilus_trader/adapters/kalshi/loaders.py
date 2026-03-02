@@ -138,9 +138,16 @@ class KalshiDataLoader:
         data = msgspec.json.decode(response.body)
         market = data["market"]
         instrument = _market_dict_to_instrument(market)
-        # series_ticker is the prefix of event_ticker before the first hyphen
-        # (e.g. event_ticker "KXBTC-25MAR15" → series_ticker "KXBTC")
-        series_ticker = market["event_ticker"].split("-")[0]
+
+        event_ticker = market["event_ticker"]
+        event_response = await client.get(url=f"{KALSHI_REST_BASE}/events/{event_ticker}")
+        if event_response.status != 200:
+            raise RuntimeError(
+                f"Failed to fetch event '{event_ticker}': "
+                f"HTTP {event_response.status}: {event_response.body.decode('utf-8')}",
+            )
+        event_data = msgspec.json.decode(event_response.body)
+        series_ticker = event_data["event"]["series_ticker"]
 
         return cls(instrument=instrument, series_ticker=series_ticker, http_client=client)
 
