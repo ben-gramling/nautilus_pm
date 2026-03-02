@@ -17,11 +17,11 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from nautilus_trader.adapters.kalshi.config import KalshiDataClientConfig
+from nautilus_trader.adapters.kalshi.providers import KalshiInstrumentProvider
 from nautilus_trader.live.data_client import LiveMarketDataClient
 from nautilus_trader.model.identifiers import ClientId
 
-from nautilus_trader.adapters.kalshi.config import KalshiDataClientConfig
-from nautilus_trader.adapters.kalshi.providers import KalshiInstrumentProvider
 
 if TYPE_CHECKING:
     from nautilus_trader.cache.cache import Cache

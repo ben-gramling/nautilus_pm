@@ -14,11 +14,21 @@
 
 from __future__ import annotations
 
+import decimal
 import logging
 from datetime import datetime
 
 from nautilus_trader.adapters.kalshi.config import KalshiDataClientConfig
 from nautilus_trader.common.providers import InstrumentProvider
+from nautilus_trader.core.datetime import dt_to_unix_nanos
+from nautilus_trader.model.enums import AssetClass
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import Symbol
+from nautilus_trader.model.identifiers import Venue
+from nautilus_trader.model.instruments import BinaryOption
+from nautilus_trader.model.objects import Currency
+from nautilus_trader.model.objects import Price
+from nautilus_trader.model.objects import Quantity
 
 
 _log = logging.getLogger(__name__)
@@ -44,7 +54,7 @@ class _KalshiHttpClient:
     def __init__(self, base_url: str) -> None:
         self._base_url = base_url
         try:
-            import httpx  # noqa: PLC0415
+            import httpx
 
             self._client = httpx.AsyncClient(base_url=base_url, timeout=60)
         except ImportError as exc:
@@ -129,7 +139,7 @@ class KalshiInstrumentProvider(InstrumentProvider):
             try:
                 instrument = self._market_to_instrument(market)
                 self.add(instrument)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _log.warning(
                     "Kalshi: failed to parse market %s: %s",
                     market.get("ticker"),
@@ -145,18 +155,6 @@ class KalshiInstrumentProvider(InstrumentProvider):
 
     def _market_to_instrument(self, market: dict) -> BinaryOption:
         """Convert a Kalshi market dict to a NautilusTrader ``BinaryOption``."""
-        import decimal  # noqa: PLC0415
-
-        from nautilus_trader.core.datetime import dt_to_unix_nanos  # noqa: PLC0415
-        from nautilus_trader.model.enums import AssetClass  # noqa: PLC0415
-        from nautilus_trader.model.identifiers import InstrumentId  # noqa: PLC0415
-        from nautilus_trader.model.identifiers import Symbol  # noqa: PLC0415
-        from nautilus_trader.model.identifiers import Venue  # noqa: PLC0415
-        from nautilus_trader.model.instruments import BinaryOption  # noqa: PLC0415
-        from nautilus_trader.model.objects import Currency  # noqa: PLC0415
-        from nautilus_trader.model.objects import Price  # noqa: PLC0415
-        from nautilus_trader.model.objects import Quantity  # noqa: PLC0415
-
         ticker = market["ticker"]
         venue = Venue("KALSHI")
         instrument_id = InstrumentId(Symbol(ticker), venue)
@@ -164,7 +162,7 @@ class KalshiInstrumentProvider(InstrumentProvider):
         def parse_ts(s: str | None) -> int:
             if not s:
                 return 0
-            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(s)
             return dt_to_unix_nanos(dt)
 
         return BinaryOption(
@@ -180,8 +178,8 @@ class KalshiInstrumentProvider(InstrumentProvider):
             size_precision=2,
             price_increment=Price.from_str("0.0001"),
             size_increment=Quantity.from_str("0.01"),
-            maker_fee=decimal.Decimal("0"),
-            taker_fee=decimal.Decimal("0"),
+            maker_fee=decimal.Decimal(0),
+            taker_fee=decimal.Decimal(0),
             outcome="Yes",
             description=market.get("title"),
             ts_event=0,

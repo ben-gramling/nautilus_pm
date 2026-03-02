@@ -22,6 +22,7 @@ from nautilus_trader.adapters.kalshi.data import KalshiDataClient
 from nautilus_trader.adapters.kalshi.providers import KalshiInstrumentProvider
 from nautilus_trader.live.factories import LiveDataClientFactory
 
+
 if TYPE_CHECKING:
     from nautilus_trader.cache.cache import Cache
     from nautilus_trader.common.component import LiveClock

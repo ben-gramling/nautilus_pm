@@ -12,8 +12,9 @@
 #  permissions and limitations under the License.
 # -------------------------------------------------------------------------------------------------
 
-import pytest
 from unittest.mock import AsyncMock
+
+import pytest
 
 from nautilus_trader.adapters.kalshi.config import KalshiDataClientConfig
 from nautilus_trader.adapters.kalshi.providers import KalshiInstrumentProvider

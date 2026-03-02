@@ -1,4 +1,5 @@
 import asyncio
+
 from nautilus_trader.adapters.kalshi.config import KalshiDataClientConfig
 from nautilus_trader.adapters.kalshi.providers import KalshiInstrumentProvider
 
