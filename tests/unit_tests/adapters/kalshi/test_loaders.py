@@ -59,19 +59,20 @@ def make_instrument() -> BinaryOption:
 def test_init_stores_instrument():
     instrument = make_instrument()
     http_client = MagicMock()
-    loader = KalshiDataLoader(instrument=instrument, http_client=http_client)
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=http_client)
     assert loader.instrument is instrument
 
 
 def test_init_creates_default_http_client():
     instrument = make_instrument()
-    loader = KalshiDataLoader(instrument=instrument)
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC")
     assert loader._http_client is not None
 
 
 def make_market_dict(ticker: str = "KXBTC-25MAR15-B100000") -> dict:
     return {
         "ticker": ticker,
+        "series_ticker": "KXBTC",
         "title": "BTC above 100k on March 15?",
         "open_time": "2025-01-01T00:00:00Z",
         "close_time": "2025-03-15T00:00:00Z",
@@ -130,6 +131,7 @@ async def test_from_market_ticker_returns_loader():
 
     assert isinstance(loader, KalshiDataLoader)
     assert loader.instrument.id.symbol.value == ticker
+    assert loader._series_ticker == "KXBTC"
     mock_client.get.assert_called_once()
 
 
@@ -158,7 +160,7 @@ async def test_fetch_trades_single_page():
     mock_client.get = AsyncMock(
         return_value=make_mock_response({"trades": [make_trade_dict()], "cursor": ""})
     )
-    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=mock_client)
 
     trades = await loader.fetch_trades()
 
@@ -174,7 +176,7 @@ async def test_fetch_trades_paginates():
     page1 = make_mock_response({"trades": [make_trade_dict(ts=1)], "cursor": "abc"})
     page2 = make_mock_response({"trades": [make_trade_dict(ts=2)], "cursor": ""})
     mock_client.get = AsyncMock(side_effect=[page1, page2])
-    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=mock_client)
 
     trades = await loader.fetch_trades()
 
@@ -184,7 +186,7 @@ async def test_fetch_trades_paginates():
 
 def test_parse_trades_returns_trade_ticks():
     instrument = make_instrument()
-    loader = KalshiDataLoader(instrument=instrument, http_client=MagicMock())
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=MagicMock())
 
     raw = [
         make_trade_dict(ts=1700000000, yes_price="0.4200", count="10.00", taker_side="yes"),
@@ -202,7 +204,7 @@ def test_parse_trades_returns_trade_ticks():
 
 def test_parse_trades_unknown_side_gives_no_aggressor():
     instrument = make_instrument()
-    loader = KalshiDataLoader(instrument=instrument, http_client=MagicMock())
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=MagicMock())
 
     raw = [make_trade_dict(taker_side="unknown")]
     ticks = loader.parse_trades(raw)
@@ -222,7 +224,7 @@ async def test_load_trades_filters_by_time_range():
     mock_client.get = AsyncMock(
         return_value=make_mock_response({"trades": raw, "cursor": ""})
     )
-    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=mock_client)
 
     start = pd.Timestamp(1500, unit="s", tz="UTC")  # ts=1000 is excluded
     end = pd.Timestamp(2000, unit="s", tz="UTC")    # ts=2000 is included
@@ -244,7 +246,7 @@ async def test_load_trades_sorted_chronologically():
         make_trade_dict(ts=2000),
     ]
     mock_client.get = AsyncMock(return_value=make_mock_response({"trades": raw, "cursor": ""}))
-    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=mock_client)
 
     ticks = await loader.load_trades()
 
@@ -259,14 +261,16 @@ async def test_fetch_candlesticks_returns_raw_list():
     mock_client.get = AsyncMock(
         return_value=make_mock_response({"candlesticks": [make_candle_dict()]})
     )
-    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=mock_client)
 
     candles = await loader.fetch_candlesticks(start_ts=1699999000, end_ts=1700000100)
 
     assert len(candles) == 1
     assert candles[0]["end_period_ts"] == 1700000060
-    # Verify period_interval param sent as "1" (Minutes1 default)
     call_kwargs = mock_client.get.call_args
+    # Verify live candlesticks endpoint with series_ticker in path
+    assert "/series/KXBTC/markets/KXBTC-25MAR15-B100000/candlesticks" in call_kwargs.kwargs["url"]
+    # Verify period_interval param sent as "1" (Minutes1 default)
     assert call_kwargs.kwargs["params"]["period_interval"] == "1"
 
 
@@ -275,7 +279,7 @@ async def test_fetch_candlesticks_hours_interval():
     instrument = make_instrument()
     mock_client = MagicMock()
     mock_client.get = AsyncMock(return_value=make_mock_response({"candlesticks": []}))
-    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=mock_client)
 
     await loader.fetch_candlesticks(start_ts=0, end_ts=1, interval="Hours1")
 
@@ -287,7 +291,7 @@ async def test_fetch_candlesticks_hours_interval():
 async def test_fetch_candlesticks_invalid_interval_raises():
     instrument = make_instrument()
     mock_client = MagicMock()
-    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=mock_client)
 
     with pytest.raises(ValueError, match="Invalid interval"):
         await loader.fetch_candlesticks(interval="Ticks1")
@@ -295,7 +299,7 @@ async def test_fetch_candlesticks_invalid_interval_raises():
 
 def test_parse_candlesticks_returns_bars():
     instrument = make_instrument()
-    loader = KalshiDataLoader(instrument=instrument, http_client=MagicMock())
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=MagicMock())
 
     raw = [make_candle_dict(end_ts=1700000060)]
     bars = loader.parse_candlesticks(raw, interval="Minutes1")
@@ -311,7 +315,7 @@ def test_parse_candlesticks_returns_bars():
 
 def test_parse_candlesticks_invalid_interval_raises():
     instrument = make_instrument()
-    loader = KalshiDataLoader(instrument=instrument, http_client=MagicMock())
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=MagicMock())
 
     with pytest.raises(ValueError, match="Invalid interval"):
         loader.parse_candlesticks([], interval="Ticks1")
@@ -327,7 +331,7 @@ async def test_load_bars_returns_sorted_bars():
         make_candle_dict(end_ts=2000),
     ]
     mock_client.get = AsyncMock(return_value=make_mock_response({"candlesticks": candles}))
-    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=mock_client)
 
     bars = await loader.load_bars()
 
@@ -341,7 +345,7 @@ async def test_load_bars_passes_time_range_and_interval():
     instrument = make_instrument()
     mock_client = MagicMock()
     mock_client.get = AsyncMock(return_value=make_mock_response({"candlesticks": []}))
-    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=mock_client)
 
     start = pd.Timestamp("2024-01-01", tz="UTC")
     end = pd.Timestamp("2024-01-31", tz="UTC")

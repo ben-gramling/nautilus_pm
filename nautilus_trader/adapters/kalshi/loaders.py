@@ -43,14 +43,12 @@ KALSHI_HTTP_RATE_LIMIT_RPS = 20  # Basic tier
 
 class KalshiDataLoader:
     """
-    Provides a data loader for historical Kalshi market data.
+    Provides a data loader for historical Kalshi prediction market data.
 
-    This loader fetches data from the public Kalshi REST API:
+    This loader fetches data from the Kalshi REST API:
     - ``GET /markets/{ticker}`` — instrument discovery
     - ``GET /historical/markets/{ticker}/trades`` — historical trades (cursor-paginated)
-    - ``GET /historical/markets/{ticker}/candlesticks`` — OHLCV bars
-
-    Historical endpoints are public and require no authentication.
+    - ``GET /series/{series_ticker}/markets/{ticker}/candlesticks`` — OHLCV bars
 
     If no ``http_client`` is provided, the loader creates one with a default
     rate limit of 20 requests per second (Kalshi Basic tier).
@@ -59,6 +57,9 @@ class KalshiDataLoader:
     ----------
     instrument : BinaryOption
         The binary option instrument to load data for.
+    series_ticker : str
+        The Kalshi series ticker for the instrument, e.g. ``"KXBTC"``.
+        Required for the candlesticks endpoint path.
     http_client : nautilus_pyo3.HttpClient, optional
         HTTP client to use for requests. If not provided, a new client is created.
     """
@@ -78,9 +79,11 @@ class KalshiDataLoader:
     def __init__(
         self,
         instrument: BinaryOption,
+        series_ticker: str,
         http_client: nautilus_pyo3.HttpClient | None = None,
     ) -> None:
         self._instrument = instrument
+        self._series_ticker = series_ticker
         self._http_client = http_client or self._create_http_client()
 
     @staticmethod
@@ -135,8 +138,9 @@ class KalshiDataLoader:
         data = msgspec.json.decode(response.body)
         market = data["market"]
         instrument = _market_dict_to_instrument(market)
+        series_ticker = market["series_ticker"]
 
-        return cls(instrument=instrument, http_client=client)
+        return cls(instrument=instrument, series_ticker=series_ticker, http_client=client)
 
     async def fetch_trades(
         self,
@@ -243,7 +247,7 @@ class KalshiDataLoader:
             params["end_ts"] = str(end_ts)
 
         response = await self._http_client.get(
-            url=f"{KALSHI_REST_BASE}/historical/markets/{ticker}/candlesticks",
+            url=f"{KALSHI_REST_BASE}/series/{self._series_ticker}/markets/{ticker}/candlesticks",
             params=params,
         )
 
