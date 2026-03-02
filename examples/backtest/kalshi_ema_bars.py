@@ -13,6 +13,19 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 # -------------------------------------------------------------------------------------------------
+"""
+Example script demonstrating a two-phase EMA-cross backtest using Kalshi market data.
+
+Phase 1 uses KalshiDataLoader to fetch hourly bars from the Kalshi API and write them
+into a local ParquetDataCatalog for efficient replay.
+
+Phase 2 runs an EMA-cross strategy over the catalogued bars using BacktestNode.
+
+Before running, set the constants at the top of the file (MARKET_TICKER, BAR_INTERVAL,
+CATALOG_PATH, START, END, FAST_EMA, SLOW_EMA, TRADE_SIZE) to match the market and date
+range you want to backtest.
+
+"""
 
 import asyncio
 from decimal import Decimal
