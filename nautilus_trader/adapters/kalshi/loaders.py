@@ -23,6 +23,7 @@ import msgspec
 import pandas as pd
 
 from nautilus_trader.adapters.kalshi.providers import KALSHI_REST_BASE
+from nautilus_trader.adapters.kalshi.providers import _market_dict_to_instrument
 from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.core.datetime import secs_to_nanos
 from nautilus_trader.model.data import Bar
@@ -38,48 +39,6 @@ from nautilus_trader.model.instruments import BinaryOption
 
 
 KALSHI_HTTP_RATE_LIMIT_RPS = 20  # Basic tier
-
-
-def _market_dict_to_instrument(market: dict[str, Any]) -> BinaryOption:
-    """Convert a Kalshi market dict to a NautilusTrader BinaryOption."""
-    import decimal
-    from datetime import datetime
-
-    from nautilus_trader.core.datetime import dt_to_unix_nanos
-    from nautilus_trader.model.enums import AssetClass
-    from nautilus_trader.model.identifiers import InstrumentId
-    from nautilus_trader.model.identifiers import Symbol
-    from nautilus_trader.model.identifiers import Venue
-    from nautilus_trader.model.objects import Currency
-    from nautilus_trader.model.objects import Price
-    from nautilus_trader.model.objects import Quantity
-
-    ticker = market["ticker"]
-
-    def parse_ts(s: str | None) -> int:
-        if not s:
-            return 0
-        dt = datetime.fromisoformat(s)
-        return dt_to_unix_nanos(dt)
-
-    return BinaryOption(
-        instrument_id=InstrumentId(Symbol(ticker), Venue("KALSHI")),
-        raw_symbol=Symbol(ticker),
-        asset_class=AssetClass.ALTERNATIVE,
-        currency=Currency.from_str("USD"),
-        activation_ns=parse_ts(market.get("open_time")),
-        expiration_ns=parse_ts(market.get("close_time") or market.get("latest_expiration_time")),
-        price_precision=4,
-        size_precision=2,
-        price_increment=Price.from_str("0.0001"),
-        size_increment=Quantity.from_str("0.01"),
-        maker_fee=decimal.Decimal(0),
-        taker_fee=decimal.Decimal(0),
-        outcome="Yes",
-        description=market.get("title"),
-        ts_event=0,
-        ts_init=0,
-    )
 
 
 class KalshiDataLoader:

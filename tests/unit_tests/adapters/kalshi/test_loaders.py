@@ -215,21 +215,23 @@ async def test_load_trades_filters_by_time_range():
     instrument = make_instrument()
     mock_client = MagicMock()
     raw = [
-        make_trade_dict(ts=1000),  # before start
-        make_trade_dict(ts=2000),  # in range
-        make_trade_dict(ts=3000),  # after end
+        make_trade_dict(ts=1000),   # before start - excluded
+        make_trade_dict(ts=2000),   # in range - included
+        make_trade_dict(ts=3000),   # after end - excluded
     ]
-    mock_client.get = AsyncMock(return_value=make_mock_response({"trades": raw, "cursor": ""}))
+    mock_client.get = AsyncMock(
+        return_value=make_mock_response({"trades": raw, "cursor": ""})
+    )
     loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
 
-    # start=ts 1000 (inclusive), end=ts 2000 (inclusive)
-    start = pd.Timestamp(1000, unit="s", tz="UTC")
-    end = pd.Timestamp(2000, unit="s", tz="UTC")
+    start = pd.Timestamp(1500, unit="s", tz="UTC")  # ts=1000 is excluded
+    end = pd.Timestamp(2000, unit="s", tz="UTC")    # ts=2000 is included
 
     ticks = await loader.load_trades(start=start, end=end)
 
+    assert len(ticks) == 1
     ts_seconds = [t.ts_event // 1_000_000_000 for t in ticks]
-    assert all(1000 <= ts <= 2000 for ts in ts_seconds)
+    assert all(1500 <= ts <= 2000 for ts in ts_seconds)
 
 
 @pytest.mark.asyncio
