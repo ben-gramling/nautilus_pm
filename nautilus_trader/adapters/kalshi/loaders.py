@@ -17,11 +17,60 @@ Provides a data loader for historical Kalshi prediction market data.
 
 from __future__ import annotations
 
+from typing import Any
+
+import msgspec
+
+from nautilus_trader.adapters.kalshi.providers import KALSHI_REST_BASE
 from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.model.instruments import BinaryOption
 
 
 KALSHI_HTTP_RATE_LIMIT_RPS = 20  # Basic tier
+
+
+def _market_dict_to_instrument(market: dict[str, Any]) -> BinaryOption:
+    """Convert a Kalshi market dict to a NautilusTrader BinaryOption."""
+    import decimal
+    from datetime import datetime
+
+    from nautilus_trader.core.datetime import dt_to_unix_nanos
+    from nautilus_trader.model.enums import AssetClass
+    from nautilus_trader.model.identifiers import InstrumentId
+    from nautilus_trader.model.identifiers import Symbol
+    from nautilus_trader.model.identifiers import Venue
+    from nautilus_trader.model.objects import Currency
+    from nautilus_trader.model.objects import Price
+    from nautilus_trader.model.objects import Quantity
+
+    ticker = market["ticker"]
+
+    def parse_ts(s: str | None) -> int:
+        if not s:
+            return 0
+        dt = datetime.fromisoformat(s)
+        return dt_to_unix_nanos(dt)
+
+    return BinaryOption(
+        instrument_id=InstrumentId(Symbol(ticker), Venue("KALSHI")),
+        raw_symbol=Symbol(ticker),
+        asset_class=AssetClass.ALTERNATIVE,
+        currency=Currency.from_str("USD"),
+        activation_ns=parse_ts(market.get("open_time")),
+        expiration_ns=parse_ts(
+            market.get("close_time") or market.get("latest_expiration_time")
+        ),
+        price_precision=4,
+        size_precision=2,
+        price_increment=Price.from_str("0.0001"),
+        size_increment=Quantity.from_str("0.01"),
+        maker_fee=decimal.Decimal(0),
+        taker_fee=decimal.Decimal(0),
+        outcome="Yes",
+        description=market.get("title"),
+        ts_event=0,
+        ts_init=0,
+    )
 
 
 class KalshiDataLoader:
@@ -64,3 +113,47 @@ class KalshiDataLoader:
     def instrument(self) -> BinaryOption:
         """Return the instrument for this loader."""
         return self._instrument
+
+    @classmethod
+    async def from_market_ticker(
+        cls,
+        ticker: str,
+        http_client: nautilus_pyo3.HttpClient | None = None,
+    ) -> KalshiDataLoader:
+        """
+        Create a loader by fetching market data for the given ticker.
+
+        Parameters
+        ----------
+        ticker : str
+            The Kalshi market ticker, e.g. ``"KXBTC-25MAR15-B100000"``.
+        http_client : nautilus_pyo3.HttpClient, optional
+            HTTP client to use. If not provided, a new client is created.
+
+        Returns
+        -------
+        KalshiDataLoader
+
+        Raises
+        ------
+        ValueError
+            If the market ticker is not found.
+        RuntimeError
+            If the HTTP request fails.
+        """
+        client = http_client or cls._create_http_client()
+        response = await client.get(url=f"{KALSHI_REST_BASE}/markets/{ticker}")
+
+        if response.status == 404:
+            raise ValueError(f"Market ticker '{ticker}' not found")
+        if response.status != 200:
+            raise RuntimeError(
+                f"HTTP request failed with status {response.status}: "
+                f"{response.body.decode('utf-8')}",
+            )
+
+        data = msgspec.json.decode(response.body)
+        market = data["market"]
+        instrument = _market_dict_to_instrument(market)
+
+        return cls(instrument=instrument, http_client=client)

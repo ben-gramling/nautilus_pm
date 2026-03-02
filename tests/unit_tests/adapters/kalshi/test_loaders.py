@@ -13,7 +13,11 @@
 # -------------------------------------------------------------------------------------------------
 
 import decimal
+from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
+
+import msgspec
+import pytest
 
 from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader
 from nautilus_trader.model.enums import AssetClass
@@ -59,3 +63,47 @@ def test_init_creates_default_http_client():
     instrument = make_instrument()
     loader = KalshiDataLoader(instrument=instrument)
     assert loader._http_client is not None
+
+
+def make_market_dict(ticker: str = "KXBTC-25MAR15-B100000") -> dict:
+    return {
+        "ticker": ticker,
+        "title": "BTC above 100k on March 15?",
+        "open_time": "2025-01-01T00:00:00Z",
+        "close_time": "2025-03-15T00:00:00Z",
+        "latest_expiration_time": "2025-03-15T00:00:00Z",
+    }
+
+
+def make_mock_response(body: dict | list, status: int = 200):
+    mock = MagicMock()
+    mock.status = status
+    mock.body = msgspec.json.encode(body)
+    return mock
+
+
+@pytest.mark.asyncio
+async def test_from_market_ticker_returns_loader():
+    ticker = "KXBTC-25MAR15-B100000"
+    market = make_market_dict(ticker)
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(
+        return_value=make_mock_response({"market": market})
+    )
+
+    loader = await KalshiDataLoader.from_market_ticker(ticker, http_client=mock_client)
+
+    assert isinstance(loader, KalshiDataLoader)
+    assert loader.instrument.id.symbol.value == ticker
+    mock_client.get.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_from_market_ticker_raises_on_404():
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(
+        return_value=make_mock_response({}, status=404)
+    )
+
+    with pytest.raises(ValueError, match="not found"):
+        await KalshiDataLoader.from_market_ticker("NONEXISTENT", http_client=mock_client)
