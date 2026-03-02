@@ -124,9 +124,7 @@ async def test_from_market_ticker_returns_loader():
     ticker = "KXBTC-25MAR15-B100000"
     market = make_market_dict(ticker)
     mock_client = MagicMock()
-    mock_client.get = AsyncMock(
-        return_value=make_mock_response({"market": market})
-    )
+    mock_client.get = AsyncMock(return_value=make_mock_response({"market": market}))
 
     loader = await KalshiDataLoader.from_market_ticker(ticker, http_client=mock_client)
 
@@ -138,9 +136,7 @@ async def test_from_market_ticker_returns_loader():
 @pytest.mark.asyncio
 async def test_from_market_ticker_raises_on_404():
     mock_client = MagicMock()
-    mock_client.get = AsyncMock(
-        return_value=make_mock_response({}, status=404)
-    )
+    mock_client.get = AsyncMock(return_value=make_mock_response({}, status=404))
 
     with pytest.raises(ValueError, match="not found"):
         await KalshiDataLoader.from_market_ticker("NONEXISTENT", http_client=mock_client)
@@ -149,9 +145,7 @@ async def test_from_market_ticker_raises_on_404():
 @pytest.mark.asyncio
 async def test_from_market_ticker_raises_on_server_error():
     mock_client = MagicMock()
-    mock_client.get = AsyncMock(
-        return_value=make_mock_response({"error": "internal"}, status=500)
-    )
+    mock_client.get = AsyncMock(return_value=make_mock_response({"error": "internal"}, status=500))
 
     with pytest.raises(RuntimeError, match="HTTP request failed"):
         await KalshiDataLoader.from_market_ticker("KXBTC-25MAR15-B100000", http_client=mock_client)
@@ -221,13 +215,11 @@ async def test_load_trades_filters_by_time_range():
     instrument = make_instrument()
     mock_client = MagicMock()
     raw = [
-        make_trade_dict(ts=1000),   # before start
-        make_trade_dict(ts=2000),   # in range
-        make_trade_dict(ts=3000),   # after end
+        make_trade_dict(ts=1000),  # before start
+        make_trade_dict(ts=2000),  # in range
+        make_trade_dict(ts=3000),  # after end
     ]
-    mock_client.get = AsyncMock(
-        return_value=make_mock_response({"trades": raw, "cursor": ""})
-    )
+    mock_client.get = AsyncMock(return_value=make_mock_response({"trades": raw, "cursor": ""}))
     loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
 
     # start=ts 1000 (inclusive), end=ts 2000 (inclusive)
@@ -249,9 +241,7 @@ async def test_load_trades_sorted_chronologically():
         make_trade_dict(ts=1000),
         make_trade_dict(ts=2000),
     ]
-    mock_client.get = AsyncMock(
-        return_value=make_mock_response({"trades": raw, "cursor": ""})
-    )
+    mock_client.get = AsyncMock(return_value=make_mock_response({"trades": raw, "cursor": ""}))
     loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
 
     ticks = await loader.load_trades()
@@ -282,9 +272,7 @@ async def test_fetch_candlesticks_returns_raw_list():
 async def test_fetch_candlesticks_hours_interval():
     instrument = make_instrument()
     mock_client = MagicMock()
-    mock_client.get = AsyncMock(
-        return_value=make_mock_response({"candlesticks": []})
-    )
+    mock_client.get = AsyncMock(return_value=make_mock_response({"candlesticks": []}))
     loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
 
     await loader.fetch_candlesticks(start_ts=0, end_ts=1, interval="Hours1")
@@ -336,9 +324,7 @@ async def test_load_bars_returns_sorted_bars():
         make_candle_dict(end_ts=1000),
         make_candle_dict(end_ts=2000),
     ]
-    mock_client.get = AsyncMock(
-        return_value=make_mock_response({"candlesticks": candles})
-    )
+    mock_client.get = AsyncMock(return_value=make_mock_response({"candlesticks": candles}))
     loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
 
     bars = await loader.load_bars()
@@ -352,9 +338,7 @@ async def test_load_bars_returns_sorted_bars():
 async def test_load_bars_passes_time_range_and_interval():
     instrument = make_instrument()
     mock_client = MagicMock()
-    mock_client.get = AsyncMock(
-        return_value=make_mock_response({"candlesticks": []})
-    )
+    mock_client.get = AsyncMock(return_value=make_mock_response({"candlesticks": []}))
     loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
 
     start = pd.Timestamp("2024-01-01", tz="UTC")

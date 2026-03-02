@@ -68,9 +68,7 @@ def _market_dict_to_instrument(market: dict[str, Any]) -> BinaryOption:
         asset_class=AssetClass.ALTERNATIVE,
         currency=Currency.from_str("USD"),
         activation_ns=parse_ts(market.get("open_time")),
-        expiration_ns=parse_ts(
-            market.get("close_time") or market.get("latest_expiration_time")
-        ),
+        expiration_ns=parse_ts(market.get("close_time") or market.get("latest_expiration_time")),
         price_precision=4,
         size_precision=2,
         price_increment=Price.from_str("0.0001"),
@@ -273,8 +271,7 @@ class KalshiDataLoader:
         """
         if interval not in self._INTERVAL_MAP:
             raise ValueError(
-                f"Invalid interval '{interval}'. Must be one of: "
-                f"{list(self._INTERVAL_MAP.keys())}",
+                f"Invalid interval '{interval}'. Must be one of: {list(self._INTERVAL_MAP.keys())}",
             )
 
         ticker = self._instrument.id.symbol.value
