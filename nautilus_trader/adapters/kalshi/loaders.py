@@ -100,6 +100,12 @@ class KalshiDataLoader:
         HTTP client to use for requests. If not provided, a new client is created.
     """
 
+    _INTERVAL_MAP: dict[str, int] = {
+        "Minutes1": 1,
+        "Hours1": 60,
+        "Days1": 1440,
+    }
+
     def __init__(
         self,
         instrument: BinaryOption,
@@ -222,6 +228,65 @@ class KalshiDataLoader:
                 break
 
         return all_trades
+
+    async def fetch_candlesticks(
+        self,
+        start_ts: int | None = None,
+        end_ts: int | None = None,
+        interval: str = "Minutes1",
+    ) -> list[dict[str, Any]]:
+        """
+        Fetch historical OHLCV candlesticks from the Kalshi API.
+
+        Parameters
+        ----------
+        start_ts : int, optional
+            Start Unix timestamp in seconds.
+        end_ts : int, optional
+            End Unix timestamp in seconds.
+        interval : str, default "Minutes1"
+            Candlestick interval. One of ``"Minutes1"``, ``"Hours1"``, ``"Days1"``.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Raw candlestick dicts as returned by the Kalshi API.
+
+        Raises
+        ------
+        ValueError
+            If ``interval`` is not a recognized value.
+        RuntimeError
+            If the HTTP request fails.
+        """
+        if interval not in self._INTERVAL_MAP:
+            raise ValueError(
+                f"Invalid interval '{interval}'. Must be one of: "
+                f"{list(self._INTERVAL_MAP.keys())}",
+            )
+
+        ticker = self._instrument.id.symbol.value
+        params: dict[str, Any] = {
+            "period_interval": str(self._INTERVAL_MAP[interval]),
+        }
+        if start_ts is not None:
+            params["start_ts"] = str(start_ts)
+        if end_ts is not None:
+            params["end_ts"] = str(end_ts)
+
+        response = await self._http_client.get(
+            url=f"{KALSHI_REST_BASE}/historical/markets/{ticker}/candlesticks",
+            params=params,
+        )
+
+        if response.status != 200:
+            raise RuntimeError(
+                f"HTTP request failed with status {response.status}: "
+                f"{response.body.decode('utf-8')}",
+            )
+
+        data = msgspec.json.decode(response.body)
+        return data.get("candlesticks", [])
 
     def parse_trades(
         self,

@@ -85,6 +85,23 @@ def make_mock_response(body: dict | list, status: int = 200):
     return mock
 
 
+def make_candle_dict(end_ts: int = 1700000060) -> dict:
+    return {
+        "end_period_ts": end_ts,
+        "yes_bid": {"open": "0.41", "high": "0.44", "low": "0.40", "close": "0.42"},
+        "yes_ask": {"open": "0.43", "high": "0.46", "low": "0.42", "close": "0.44"},
+        "price": {
+            "open": "0.42",
+            "high": "0.45",
+            "low": "0.41",
+            "close": "0.43",
+            "mean": "0.42",
+        },
+        "volume": "100.00",
+        "open_interest": "500.00",
+    }
+
+
 def make_trade_dict(
     ts: int = 1700000000,
     yes_price: str = "0.4200",
@@ -240,3 +257,46 @@ async def test_load_trades_sorted_chronologically():
 
     ts_values = [t.ts_event for t in ticks]
     assert ts_values == sorted(ts_values)
+
+
+@pytest.mark.asyncio
+async def test_fetch_candlesticks_returns_raw_list():
+    instrument = make_instrument()
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(
+        return_value=make_mock_response({"candlesticks": [make_candle_dict()]})
+    )
+    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+
+    candles = await loader.fetch_candlesticks(start_ts=1699999000, end_ts=1700000100)
+
+    assert len(candles) == 1
+    assert candles[0]["end_period_ts"] == 1700000060
+    # Verify period_interval param sent as "1" (Minutes1 default)
+    call_kwargs = mock_client.get.call_args
+    assert call_kwargs.kwargs["params"]["period_interval"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_fetch_candlesticks_hours_interval():
+    instrument = make_instrument()
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(
+        return_value=make_mock_response({"candlesticks": []})
+    )
+    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+
+    await loader.fetch_candlesticks(start_ts=0, end_ts=1, interval="Hours1")
+
+    call_kwargs = mock_client.get.call_args
+    assert call_kwargs.kwargs["params"]["period_interval"] == "60"
+
+
+@pytest.mark.asyncio
+async def test_fetch_candlesticks_invalid_interval_raises():
+    instrument = make_instrument()
+    mock_client = MagicMock()
+    loader = KalshiDataLoader(instrument=instrument, http_client=mock_client)
+
+    with pytest.raises(ValueError, match="Invalid interval"):
+        await loader.fetch_candlesticks(interval="Ticks1")
