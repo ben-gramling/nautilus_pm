@@ -33,15 +33,15 @@ from decimal import Decimal
 import pandas as pd
 
 from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader
-from nautilus_trader.backtest.config import BacktestDataConfig  # noqa: F401
-from nautilus_trader.backtest.config import BacktestEngineConfig  # noqa: F401
-from nautilus_trader.backtest.config import BacktestRunConfig  # noqa: F401
-from nautilus_trader.backtest.config import BacktestVenueConfig  # noqa: F401
-from nautilus_trader.backtest.node import BacktestNode  # noqa: F401
-from nautilus_trader.config import ImportableStrategyConfig  # noqa: F401
-from nautilus_trader.config import LoggingConfig  # noqa: F401
-from nautilus_trader.model.identifiers import TraderId  # noqa: F401
-from nautilus_trader.model.identifiers import Venue  # noqa: F401
+from nautilus_trader.backtest.config import BacktestDataConfig
+from nautilus_trader.backtest.config import BacktestEngineConfig
+from nautilus_trader.backtest.config import BacktestRunConfig
+from nautilus_trader.backtest.config import BacktestVenueConfig
+from nautilus_trader.backtest.node import BacktestNode
+from nautilus_trader.config import ImportableStrategyConfig
+from nautilus_trader.config import LoggingConfig
+from nautilus_trader.model.identifiers import TraderId
+from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
 
 
@@ -78,7 +78,63 @@ async def fetch_and_catalog() -> None:
 
 def run_backtest() -> None:
     """Phase 2 - run EMA-cross backtest against the catalog data."""
-    pass  # TODO  # noqa: PIE790
+    instrument_id = f"{MARKET_TICKER}.KALSHI"
+    bar_type = f"{instrument_id}-1-HOUR-LAST-EXTERNAL"
+
+    venue_config = BacktestVenueConfig(
+        name="KALSHI",
+        oms_type="NETTING",
+        account_type="CASH",
+        base_currency="USD",
+        starting_balances=["10000 USD"],
+    )
+
+    data_config = BacktestDataConfig(
+        catalog_path=CATALOG_PATH,
+        data_cls="nautilus_trader.model.data:Bar",
+        instrument_id=instrument_id,
+        bar_spec="1-HOUR-LAST",
+        start_time=START,
+        end_time=END,
+    )
+
+    strategy_config = ImportableStrategyConfig(
+        strategy_path="nautilus_trader.examples.strategies.ema_cross_long_only:EMACrossLongOnly",
+        config_path="nautilus_trader.examples.strategies.ema_cross_long_only:EMACrossLongOnlyConfig",
+        config={
+            "instrument_id": instrument_id,
+            "bar_type": bar_type,
+            "fast_ema_period": FAST_EMA,
+            "slow_ema_period": SLOW_EMA,
+            "trade_size": str(TRADE_SIZE),
+        },
+    )
+
+    engine_config = BacktestEngineConfig(
+        trader_id=TraderId("BACKTESTER-001"),
+        logging=LoggingConfig(log_level="INFO"),
+        strategies=[strategy_config],
+    )
+
+    run_config = BacktestRunConfig(
+        venues=[venue_config],
+        data=[data_config],
+        engine=engine_config,
+        dispose_on_completion=False,
+    )
+
+    node = BacktestNode(configs=[run_config])
+    node.run()
+
+    engine = node.get_engine(run_config.id)
+    kalshi_venue = Venue("KALSHI")
+
+    with pd.option_context("display.max_rows", 100, "display.max_columns", None, "display.width", 300):
+        print(engine.trader.generate_account_report(kalshi_venue))
+        print(engine.trader.generate_order_fills_report())
+        print(engine.trader.generate_positions_report())
+
+    node.dispose()
 
 
 if __name__ == "__main__":
