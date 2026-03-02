@@ -25,8 +25,14 @@ import pandas as pd
 from nautilus_trader.adapters.kalshi.providers import KALSHI_REST_BASE
 from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.core.datetime import secs_to_nanos
+from nautilus_trader.model.data import Bar
+from nautilus_trader.model.data import BarSpecification
+from nautilus_trader.model.data import BarType
 from nautilus_trader.model.data import TradeTick
+from nautilus_trader.model.enums import AggregationSource
 from nautilus_trader.model.enums import AggressorSide
+from nautilus_trader.model.enums import BarAggregation
+from nautilus_trader.model.enums import PriceType
 from nautilus_trader.model.identifiers import TradeId
 from nautilus_trader.model.instruments import BinaryOption
 
@@ -104,6 +110,12 @@ class KalshiDataLoader:
         "Minutes1": 1,
         "Hours1": 60,
         "Days1": 1440,
+    }
+
+    _INTERVAL_TO_AGGREGATION: dict[str, BarAggregation] = {
+        "Minutes1": BarAggregation.MINUTE,
+        "Hours1": BarAggregation.HOUR,
+        "Days1": BarAggregation.DAY,
     }
 
     def __init__(
@@ -336,6 +348,65 @@ class KalshiDataLoader:
             )
 
         return trades
+
+    def parse_candlesticks(
+        self,
+        candlesticks_data: list[dict[str, Any]],
+        interval: str = "Minutes1",
+    ) -> list[Bar]:
+        """
+        Parse raw Kalshi candlestick dicts into Bar objects.
+
+        Parameters
+        ----------
+        candlesticks_data : list[dict[str, Any]]
+            Raw candlestick dicts from the Kalshi API.
+        interval : str, default "Minutes1"
+            The candlestick interval. One of ``"Minutes1"``, ``"Hours1"``, ``"Days1"``.
+
+        Returns
+        -------
+        list[Bar]
+
+        Raises
+        ------
+        ValueError
+            If ``interval`` is not a recognized value.
+        """
+        if interval not in self._INTERVAL_TO_AGGREGATION:
+            raise ValueError(
+                f"Invalid interval '{interval}'. Must be one of: "
+                f"{list(self._INTERVAL_TO_AGGREGATION.keys())}",
+            )
+
+        aggregation = self._INTERVAL_TO_AGGREGATION[interval]
+        bar_spec = BarSpecification(step=1, aggregation=aggregation, price_type=PriceType.LAST)
+        bar_type = BarType(
+            instrument_id=self._instrument.id,
+            bar_spec=bar_spec,
+            aggregation_source=AggregationSource.EXTERNAL,
+        )
+        make_price = self._instrument.make_price
+        make_qty = self._instrument.make_qty
+        bars: list[Bar] = []
+
+        for candle in candlesticks_data:
+            ts_event = secs_to_nanos(candle["end_period_ts"])
+            price = candle["price"]
+            bars.append(
+                Bar(
+                    bar_type=bar_type,
+                    open=make_price(price["open"]),
+                    high=make_price(price["high"]),
+                    low=make_price(price["low"]),
+                    close=make_price(price["close"]),
+                    volume=make_qty(candle["volume"]),
+                    ts_event=ts_event,
+                    ts_init=ts_event,
+                )
+            )
+
+        return bars
 
     async def load_trades(
         self,

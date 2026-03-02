@@ -21,6 +21,7 @@ import pandas as pd
 import pytest
 
 from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader
+from nautilus_trader.model.data import Bar
 from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.enums import AggressorSide
 from nautilus_trader.model.enums import AssetClass
@@ -300,3 +301,27 @@ async def test_fetch_candlesticks_invalid_interval_raises():
 
     with pytest.raises(ValueError, match="Invalid interval"):
         await loader.fetch_candlesticks(interval="Ticks1")
+
+
+def test_parse_candlesticks_returns_bars():
+    instrument = make_instrument()
+    loader = KalshiDataLoader(instrument=instrument, http_client=MagicMock())
+
+    raw = [make_candle_dict(end_ts=1700000060)]
+    bars = loader.parse_candlesticks(raw, interval="Minutes1")
+
+    assert len(bars) == 1
+    assert isinstance(bars[0], Bar)
+    assert bars[0].ts_event == 1700000060 * 1_000_000_000
+    # price.open = "0.42" → price with 4 decimals
+    assert str(bars[0].open) == "0.4200"
+    assert str(bars[0].close) == "0.4300"
+    assert str(bars[0].volume) == "100.00"
+
+
+def test_parse_candlesticks_invalid_interval_raises():
+    instrument = make_instrument()
+    loader = KalshiDataLoader(instrument=instrument, http_client=MagicMock())
+
+    with pytest.raises(ValueError, match="Invalid interval"):
+        loader.parse_candlesticks([], interval="Ticks1")
