@@ -30,9 +30,9 @@ range you want to backtest.
 import asyncio
 from decimal import Decimal
 
-import pandas as pd  # noqa: F401 (used in Phase 1 implementation)
+import pandas as pd
 
-from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader  # noqa: F401
+from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader
 from nautilus_trader.backtest.config import BacktestDataConfig  # noqa: F401
 from nautilus_trader.backtest.config import BacktestEngineConfig  # noqa: F401
 from nautilus_trader.backtest.config import BacktestRunConfig  # noqa: F401
@@ -42,7 +42,7 @@ from nautilus_trader.config import ImportableStrategyConfig  # noqa: F401
 from nautilus_trader.config import LoggingConfig  # noqa: F401
 from nautilus_trader.model.identifiers import TraderId  # noqa: F401
 from nautilus_trader.model.identifiers import Venue  # noqa: F401
-from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog  # noqa: F401
+from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +60,20 @@ TRADE_SIZE = Decimal("1")          # Number of contracts per trade  # noqa: FURB
 
 async def fetch_and_catalog() -> None:
     """Phase 1 - fetch bars from Kalshi API and write to local catalog."""
-    pass  # TODO  # noqa: PIE790
+    print(f"Fetching {BAR_INTERVAL} bars for {MARKET_TICKER} from {START} to {END}...")
+    loader = await KalshiDataLoader.from_market_ticker(MARKET_TICKER)
+
+    bars = await loader.load_bars(
+        start=pd.Timestamp(START, tz="UTC"),
+        end=pd.Timestamp(END, tz="UTC"),
+        interval=BAR_INTERVAL,
+    )
+
+    catalog = ParquetDataCatalog(CATALOG_PATH)
+    catalog.write_data([loader.instrument])
+    catalog.write_data(bars)
+
+    print(f"Wrote instrument {loader.instrument.id} and {len(bars)} bars to {CATALOG_PATH}")
 
 
 def run_backtest() -> None:
