@@ -305,6 +305,24 @@ async def test_fetch_candlesticks_invalid_interval_raises():
         await loader.fetch_candlesticks(interval="Ticks1")
 
 
+def test_parse_candlesticks_skips_empty_candles():
+    """Candles with None OHLC (no trades in that period) must be skipped."""
+    instrument = make_instrument()
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=MagicMock())
+
+    empty_candle = {
+        "end_period_ts": 1700000060,
+        "price": {"open": None, "high": None, "low": None, "close": None, "mean": None},
+        "volume": "0.00",
+        "open_interest": "500.00",
+    }
+    raw = [empty_candle, make_candle_dict(end_ts=1700000120)]
+    bars = loader.parse_candlesticks(raw, interval="Minutes1")
+
+    assert len(bars) == 1
+    assert bars[0].ts_event == 1700000120 * 1_000_000_000
+
+
 def test_parse_candlesticks_returns_bars():
     instrument = make_instrument()
     loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=MagicMock())

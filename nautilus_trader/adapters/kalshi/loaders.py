@@ -360,8 +360,11 @@ class KalshiDataLoader:
         bars: list[Bar] = []
 
         for candle in candlesticks_data:
-            ts_event = secs_to_nanos(candle["end_period_ts"])
             price = candle["price"]
+            # Skip candles with no trades (OHLC values are None for empty periods)
+            if price["open"] is None:
+                continue
+            ts_event = secs_to_nanos(candle["end_period_ts"])
             bars.append(
                 Bar(
                     bar_type=bar_type,
