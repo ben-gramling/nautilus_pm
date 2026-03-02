@@ -40,6 +40,7 @@ from nautilus_trader.backtest.config import BacktestVenueConfig
 from nautilus_trader.backtest.node import BacktestNode
 from nautilus_trader.config import ImportableStrategyConfig
 from nautilus_trader.config import LoggingConfig
+from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import TraderId
 from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
@@ -79,6 +80,8 @@ async def fetch_and_catalog() -> None:
 def run_backtest() -> None:
     """Phase 2 - run EMA-cross backtest against the catalog data."""
     instrument_id = f"{MARKET_TICKER}.KALSHI"
+    # NOTE: bar_type must match the interval written by fetch_and_catalog().
+    # If BAR_INTERVAL changes, update "1-HOUR-LAST" here accordingly.
     bar_type = f"{instrument_id}-1-HOUR-LAST-EXTERNAL"
 
     venue_config = BacktestVenueConfig(
@@ -91,7 +94,7 @@ def run_backtest() -> None:
 
     data_config = BacktestDataConfig(
         catalog_path=CATALOG_PATH,
-        data_cls="nautilus_trader.model.data:Bar",
+        data_cls=Bar,
         instrument_id=instrument_id,
         bar_spec="1-HOUR-LAST",
         start_time=START,
@@ -129,7 +132,14 @@ def run_backtest() -> None:
     engine = node.get_engine(run_config.id)
     kalshi_venue = Venue("KALSHI")
 
-    with pd.option_context("display.max_rows", 100, "display.max_columns", None, "display.width", 300):
+    with pd.option_context(
+        "display.max_rows",
+        100,
+        "display.max_columns",
+        None,
+        "display.width",
+        300,
+    ):
         print(engine.trader.generate_account_report(kalshi_venue))
         print(engine.trader.generate_order_fills_report())
         print(engine.trader.generate_positions_report())
