@@ -20,6 +20,9 @@ from decimal import Decimal
 import msgspec
 import pandas as pd  # type: ignore[import-untyped]
 
+from nautilus_trader.adapters.kalshi.fee_model import (
+    KalshiProportionalFeeModel,  # type: ignore[import-not-found]
+)
 from nautilus_trader.adapters.kalshi.loaders import (
     KalshiDataLoader,  # type: ignore[import-not-found]
 )
@@ -62,9 +65,9 @@ MAX_MARKETS = 10  # how many qualifying markets to backtest
 CANDIDATE_LIMIT = 200  # how many open markets to fetch and rank by volume
 
 WINDOW = 20  # rolling average window
-ENTRY_THRESHOLD = 1.0  # enter when close is 1¢ below rolling average
-TAKE_PROFIT = 1.0  # exit when price recovers 1¢ above fill price
-STOP_LOSS = 3.0  # stop out 3¢ below fill price
+ENTRY_THRESHOLD = 0.01  # enter when close is 1¢ below rolling average (0–1 scale)
+TAKE_PROFIT = 0.01  # exit when price recovers 1¢ above fill price
+STOP_LOSS = 0.03  # stop out 3¢ below fill price
 TRADE_SIZE = Decimal(1)
 INITIAL_CASH = 10_000.0
 MAX_RETRIES = 4  # retry 429s up to this many times
@@ -133,6 +136,12 @@ class BarMeanReversion(Strategy):
             self._entry_price = float(event.last_px)
         else:
             self._entry_price = None
+        self._pending = False
+
+    def on_order_rejected(self, event) -> None:
+        self._pending = False
+
+    def on_order_canceled(self, event) -> None:
         self._pending = False
 
     def on_stop(self) -> None:
@@ -306,6 +315,7 @@ def _run_backtest(ticker: str, loader: KalshiDataLoader, bars: list[Bar]) -> dic
         account_type=AccountType.CASH,
         base_currency=USD,
         starting_balances=[Money(INITIAL_CASH, USD)],
+        fee_model=KalshiProportionalFeeModel(),
     )
     engine.add_instrument(instrument)
     engine.add_data(bars)

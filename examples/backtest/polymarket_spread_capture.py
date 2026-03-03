@@ -10,6 +10,9 @@ from __future__ import annotations
 import asyncio
 import os
 from collections import deque
+from datetime import UTC
+from datetime import datetime
+from datetime import timedelta
 from decimal import Decimal
 
 import msgspec
@@ -19,10 +22,14 @@ from nautilus_trader.adapters.polymarket import POLYMARKET_VENUE  # type: ignore
 from nautilus_trader.adapters.polymarket import (
     PolymarketDataLoader,  # type: ignore[import-not-found]
 )
+from nautilus_trader.adapters.polymarket.common.parsing import (  # type: ignore[import-not-found]
+    calculate_commission,
+)
 from nautilus_trader.analysis.config import TearsheetConfig  # type: ignore[import-not-found]
 from nautilus_trader.analysis.tearsheet import create_tearsheet  # type: ignore[import-not-found]
 from nautilus_trader.backtest.config import BacktestEngineConfig  # type: ignore[import-not-found]
 from nautilus_trader.backtest.engine import BacktestEngine  # type: ignore[import-not-found]
+from nautilus_trader.backtest.models import FeeModel  # type: ignore[import-not-found]
 from nautilus_trader.config import LoggingConfig  # type: ignore[import-not-found]
 from nautilus_trader.core import nautilus_pyo3  # type: ignore[import-not-found]
 from nautilus_trader.model.currencies import USDC_POS  # type: ignore[import-not-found]
@@ -34,8 +41,38 @@ from nautilus_trader.model.enums import TimeInForce  # type: ignore[import-not-f
 from nautilus_trader.model.identifiers import InstrumentId  # type: ignore[import-not-found]
 from nautilus_trader.model.identifiers import TraderId  # type: ignore[import-not-found]
 from nautilus_trader.model.objects import Money  # type: ignore[import-not-found]
+from nautilus_trader.risk.config import RiskEngineConfig  # type: ignore[import-not-found]
 from nautilus_trader.trading.strategy import Strategy  # type: ignore[import-not-found]
 from nautilus_trader.trading.strategy import StrategyConfig  # type: ignore[import-not-found]
+
+
+class PolymarketFeeModel(FeeModel):
+    """
+    Polymarket taker fee model.
+
+    Applies the Polymarket non-linear fee formula per fill::
+
+        fee = qty × p × feeRate × (p × (1 − p)) ^ exponent
+
+    Fee rates come from the instrument's ``taker_fee`` attribute (set by
+    ``parse_polymarket_instrument`` from the market API response).
+    Exponent is 1 for crypto markets (~175 bps) and 2 for sports (~2500 bps).
+    """
+
+    def get_commission(self, order, fill_qty, fill_px, instrument) -> Money:
+        taker_fee_dec = instrument.taker_fee  # decimal fraction (bps / 10_000)
+        fee_rate_bps = taker_fee_dec * Decimal(10_000)
+        if fee_rate_bps <= 0:
+            return Money(Decimal(0), instrument.quote_currency)
+        # exponent=2 for sports markets (>1000 bps), exponent=1 for crypto
+        fee_exponent = 2 if fee_rate_bps > Decimal(1000) else 1
+        commission = calculate_commission(
+            quantity=Decimal(str(fill_qty)),
+            price=Decimal(str(fill_px)),
+            fee_rate_bps=fee_rate_bps,
+            fee_exponent=fee_exponent,
+        )
+        return Money(Decimal(str(commission)), instrument.quote_currency)
 
 
 # ── Strategy metadata (shown in the menu) ────────────────────────────────────
@@ -44,6 +81,7 @@ DESCRIPTION = "Mean-reversion spread capture across Polymarket markets"
 
 # ── Configure here ────────────────────────────────────────────────────────────
 MARKET_SLUG = "gta-vi-released-before-june-2026"
+LOOKBACK_DAYS = 7  # days of 1-min price-history ticks to fetch (API max ~10 days)
 MAX_MARKETS = 15
 MIN_TRADES = 50
 VWAP_WINDOW = 20
@@ -116,6 +154,12 @@ class SpreadCapture(Strategy):
             self._entry_price = None
         self._pending = False
 
+    def on_order_rejected(self, event) -> None:
+        self._pending = False
+
+    def on_order_canceled(self, event) -> None:
+        self._pending = False
+
     def on_stop(self) -> None:
         self.cancel_all_orders(self.config.instrument_id)
         self.close_all_positions(self.config.instrument_id)
@@ -169,11 +213,11 @@ async def _discover_slugs(max_markets: int) -> list[str]:
     return slugs
 
 
-async def _load_market(slug: str):
-    """Fetch trades for one market slug.  Returns None if data is insufficient."""
+async def _load_market(slug: str, start: pd.Timestamp, end: pd.Timestamp):
+    """Fetch price-history ticks for one market slug.  Returns None if data is insufficient."""
     try:
         loader = await PolymarketDataLoader.from_market_slug(slug)
-        trades = await loader.load_trades()
+        trades = await loader.load_trades(start, end)
         if len(trades) < MIN_TRADES:
             return None
         return loader, trades
@@ -203,6 +247,7 @@ def _run_backtest(slug: str, loader: PolymarketDataLoader, trades: list) -> dict
         config=BacktestEngineConfig(
             trader_id=TraderId("BACKTESTER-001"),
             logging=LoggingConfig(log_level="INFO"),
+            risk_engine=RiskEngineConfig(bypass=True),
         )
     )
     engine.add_venue(
@@ -211,6 +256,7 @@ def _run_backtest(slug: str, loader: PolymarketDataLoader, trades: list) -> dict
         account_type=AccountType.CASH,
         base_currency=USDC_POS,
         starting_balances=[Money(INITIAL_CASH, USDC_POS)],
+        fee_model=PolymarketFeeModel(),
     )
     engine.add_instrument(instrument)
     engine.add_data(trades)
@@ -265,11 +311,15 @@ def _print_summary(results: list[dict]) -> None:
 
 
 async def run() -> None:
+    now = datetime.now(UTC)
+    start = pd.Timestamp(now - timedelta(days=LOOKBACK_DAYS))
+    end = pd.Timestamp(now)
+
     print(f"Discovering top {MAX_MARKETS} active Polymarket markets by volume...")
     slugs = await _discover_slugs(MAX_MARKETS)
     print(f"Found {len(slugs)} markets → fetching trades in parallel...\n")
 
-    loaded = await asyncio.gather(*[_load_market(s) for s in slugs])
+    loaded = await asyncio.gather(*[_load_market(s, start, end) for s in slugs])
 
     results: list[dict] = []
     for slug, market_data in zip(slugs, loaded, strict=False):
