@@ -22,14 +22,12 @@ from nautilus_trader.adapters.polymarket import POLYMARKET_VENUE
 from nautilus_trader.adapters.polymarket import (
     PolymarketDataLoader,
 )
-from nautilus_trader.adapters.polymarket.common.parsing import (
-    calculate_commission,
-)
+from nautilus_trader.adapters.polymarket.common.gamma_markets import list_markets
+from nautilus_trader.adapters.polymarket.fee_model import PolymarketFeeModel
 from nautilus_trader.analysis.config import TearsheetConfig
 from nautilus_trader.analysis.tearsheet import create_tearsheet
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
-from nautilus_trader.backtest.models import FeeModel
 from nautilus_trader.config import LoggingConfig
 from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.model.currencies import USDC_POS
@@ -44,35 +42,6 @@ from nautilus_trader.model.objects import Money
 from nautilus_trader.risk.config import RiskEngineConfig
 from nautilus_trader.trading.strategy import Strategy
 from nautilus_trader.trading.strategy import StrategyConfig
-
-
-class PolymarketFeeModel(FeeModel):
-    """
-    Polymarket taker fee model.
-
-    Applies the Polymarket non-linear fee formula per fill::
-
-        fee = qty × p × feeRate × (p × (1 − p)) ^ exponent
-
-    Fee rates come from the instrument's ``taker_fee`` attribute (set by
-    ``parse_polymarket_instrument`` from the market API response).
-    Exponent is 1 for crypto markets (~175 bps) and 2 for sports (~2500 bps).
-    """
-
-    def get_commission(self, order, fill_qty, fill_px, instrument) -> Money:  # type: ignore[no-untyped-def]
-        taker_fee_dec = instrument.taker_fee  # decimal fraction (bps / 10_000)
-        fee_rate_bps = taker_fee_dec * Decimal(10_000)
-        if fee_rate_bps <= 0:
-            return Money(Decimal(0), instrument.quote_currency)
-        # exponent=2 for sports markets (>1000 bps), exponent=1 for crypto
-        fee_exponent = 2 if fee_rate_bps > Decimal(1000) else 1
-        commission = calculate_commission(
-            quantity=Decimal(str(fill_qty)),
-            price=Decimal(str(fill_px)),
-            fee_rate_bps=fee_rate_bps,
-            fee_exponent=fee_exponent,
-        )
-        return Money(Decimal(str(commission)), instrument.quote_currency)
 
 
 # ── Strategy metadata (shown in the menu) ────────────────────────────────────
@@ -92,7 +61,6 @@ PRICE_MIN = 0.25
 PRICE_MAX = 0.75
 TRADE_SIZE = Decimal(20)
 INITIAL_CASH = 10_000.0
-_GAMMA_API = "https://gamma-api.polymarket.com/markets"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -191,19 +159,14 @@ async def _discover_slugs(max_markets: int) -> list[str]:
     client = nautilus_pyo3.HttpClient(
         default_quota=nautilus_pyo3.Quota.rate_per_second(20),
     )
-    resp = await client.get(
-        url=_GAMMA_API,
-        params={
-            "active": "true",
-            "closed": "false",
-            "archived": "false",
-            "limit": "200",
-        },
+    markets = await list_markets(
+        http_client=client,
+        filters={"is_active": True, "limit": 200},
+        max_results=200,
     )
-    if resp.status != 200:
+    if not markets:
         return []
 
-    markets = msgspec.json.decode(resp.body)
     now = datetime.now(UTC)
     min_end = now + timedelta(days=LOOKBACK_DAYS)
 
