@@ -1,10 +1,11 @@
 """
 Bar-based mean-reversion (spread capture) on Kalshi minute bars.
 
-Fetches all open Kalshi markets, ranks them by trading volume (highest-volume
-markets have the most minute-bar data), then runs a BarMeanReversion strategy
-on the first MAX_MARKETS that have at least MIN_BARS of history and prints an
-aggregate performance table.
+Discovers active Kalshi markets using the same method as the Polymarket
+spread capture: ranks by 24-hour volume, filters to markets with genuine
+uncertainty (price in [PRICE_MIN, PRICE_MAX]) and enough time before
+resolution, then runs a BarMeanReversion strategy on the top MAX_MARKETS
+that have at least MIN_BARS of bar history.
 """
 
 from __future__ import annotations
@@ -18,40 +19,40 @@ from datetime import timedelta
 from decimal import Decimal
 
 import msgspec
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 
 from nautilus_trader.adapters.kalshi.fee_model import (
-    KalshiProportionalFeeModel,  # type: ignore[import-not-found]
+    KalshiProportionalFeeModel,
 )
 from nautilus_trader.adapters.kalshi.loaders import (
-    KalshiDataLoader,  # type: ignore[import-not-found]
+    KalshiDataLoader,
 )
 from nautilus_trader.adapters.kalshi.providers import (
-    KALSHI_REST_BASE,  # type: ignore[import-not-found]
+    KALSHI_REST_BASE,
 )
 from nautilus_trader.adapters.kalshi.providers import (
-    _market_dict_to_instrument,  # type: ignore[import-not-found]
+    market_dict_to_instrument,
 )
-from nautilus_trader.analysis.config import TearsheetConfig  # type: ignore[import-not-found]
-from nautilus_trader.analysis.tearsheet import create_tearsheet  # type: ignore[import-not-found]
-from nautilus_trader.backtest.config import BacktestEngineConfig  # type: ignore[import-not-found]
-from nautilus_trader.backtest.engine import BacktestEngine  # type: ignore[import-not-found]
-from nautilus_trader.config import LoggingConfig  # type: ignore[import-not-found]
-from nautilus_trader.core import nautilus_pyo3  # type: ignore[import-not-found]
-from nautilus_trader.model.currencies import USD  # type: ignore[import-not-found]
-from nautilus_trader.model.data import Bar  # type: ignore[import-not-found]
-from nautilus_trader.model.data import BarType  # type: ignore[import-not-found]
-from nautilus_trader.model.enums import AccountType  # type: ignore[import-not-found]
-from nautilus_trader.model.enums import OmsType  # type: ignore[import-not-found]
-from nautilus_trader.model.enums import OrderSide  # type: ignore[import-not-found]
-from nautilus_trader.model.enums import TimeInForce  # type: ignore[import-not-found]
-from nautilus_trader.model.identifiers import InstrumentId  # type: ignore[import-not-found]
-from nautilus_trader.model.identifiers import TraderId  # type: ignore[import-not-found]
-from nautilus_trader.model.identifiers import Venue  # type: ignore[import-not-found]
-from nautilus_trader.model.objects import Money  # type: ignore[import-not-found]
-from nautilus_trader.risk.config import RiskEngineConfig  # type: ignore[import-not-found]
-from nautilus_trader.trading.strategy import Strategy  # type: ignore[import-not-found]
-from nautilus_trader.trading.strategy import StrategyConfig  # type: ignore[import-not-found]
+from nautilus_trader.analysis.config import TearsheetConfig
+from nautilus_trader.analysis.tearsheet import create_tearsheet
+from nautilus_trader.backtest.config import BacktestEngineConfig
+from nautilus_trader.backtest.engine import BacktestEngine
+from nautilus_trader.config import LoggingConfig
+from nautilus_trader.core import nautilus_pyo3
+from nautilus_trader.model.currencies import USD
+from nautilus_trader.model.data import Bar
+from nautilus_trader.model.data import BarType
+from nautilus_trader.model.enums import AccountType
+from nautilus_trader.model.enums import OmsType
+from nautilus_trader.model.enums import OrderSide
+from nautilus_trader.model.enums import TimeInForce
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import TraderId
+from nautilus_trader.model.identifiers import Venue
+from nautilus_trader.model.objects import Money
+from nautilus_trader.risk.config import RiskEngineConfig
+from nautilus_trader.trading.strategy import Strategy
+from nautilus_trader.trading.strategy import StrategyConfig
 
 
 # ── Strategy metadata (shown in the menu) ────────────────────────────────────
@@ -59,10 +60,15 @@ NAME = "kalshi_spread_capture"
 DESCRIPTION = "Mean-reversion spread capture across Kalshi markets"
 
 # ── Configure here ────────────────────────────────────────────────────────────
-LOOKBACK_DAYS = 60  # days of bar history to fetch per market
-MIN_BARS = 50  # skip markets with fewer non-empty minute bars
-MAX_MARKETS = 10  # how many qualifying markets to backtest
-CANDIDATE_LIMIT = 200  # how many open markets to fetch and rank by volume
+LOOKBACK_DAYS = 7  # days of bar history to fetch per market
+MIN_BARS = 20  # skip markets with fewer non-empty minute bars
+MAX_MARKETS = 15  # how many qualifying markets to backtest
+CANDIDATE_LIMIT = 400  # how many open markets to fetch and rank by volume
+# Only trade markets whose YES price is in this range — avoids fully-resolved markets
+PRICE_MIN = 0.05
+PRICE_MAX = 0.95
+# Markets must be at least this many days from resolution to avoid end-of-life drift
+MIN_DAYS_TO_RESOLUTION = 2
 
 WINDOW = 20  # rolling average window
 ENTRY_THRESHOLD = 0.01  # enter when close is 1¢ below rolling average (0–1 scale)
@@ -131,17 +137,17 @@ class BarMeanReversion(Strategy):
                 self.close_all_positions(self.config.instrument_id)
                 self._pending = True
 
-    def on_order_filled(self, event) -> None:
+    def on_order_filled(self, event) -> None:  # type: ignore[no-untyped-def]
         if event.order_side == OrderSide.BUY:
             self._entry_price = float(event.last_px)
         else:
             self._entry_price = None
         self._pending = False
 
-    def on_order_rejected(self, event) -> None:
+    def on_order_rejected(self, event) -> None:  # type: ignore[no-untyped-def]
         self._pending = False
 
-    def on_order_canceled(self, event) -> None:
+    def on_order_canceled(self, event) -> None:  # type: ignore[no-untyped-def]
         self._pending = False
 
     def on_stop(self) -> None:
@@ -160,12 +166,55 @@ class BarMeanReversion(Strategy):
         self._pending = True
 
 
-def _vol(m: dict) -> float:
-    """Extract volume from a market dict as a float."""
+def _vol24h(m: dict) -> float:
+    """Extract volume from a Kalshi market dict as a float.
+
+    Tries ``volume_24h``, ``volume_fp`` (REST markets endpoint), and
+    ``volume`` (candlestick endpoint) in order.
+    """
+    for key in ("volume_24h", "volume_fp", "volume"):
+        raw = m.get(key)
+        if raw is not None:
+            try:
+                v = float(raw)
+                if v > 0:
+                    return v
+            except (TypeError, ValueError):
+                continue
+    return 0.0
+
+
+def _yes_price_kalshi(m: dict) -> float | None:
+    """Extract and normalize the current YES price from a Kalshi market dict.
+
+    The REST ``/markets`` and ``/events`` endpoints expose the price under
+    ``last_price_dollars`` (decimal 0–1 string).  Older fields like
+    ``yes_bid_dollars``, ``yes_price_dollars``, and the legacy integer-cents
+    ``yes_price`` are tried as fallbacks.
+    """
+    for key in ("last_price_dollars", "yes_bid_dollars", "yes_price_dollars", "yes_price"):
+        raw = m.get(key)
+        if raw is not None:
+            try:
+                p = float(raw)
+                if p >= 1.0:
+                    p /= 100.0  # legacy integer cents → dollars
+                if 0.0 < p < 1.0:
+                    return p
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _end_date_kalshi(m: dict) -> datetime | None:
+    """Parse the market expiry from a Kalshi market dict."""
+    raw = m.get("close_time") or m.get("latest_expiration_time")
+    if not raw:
+        return None
     try:
-        return float(m.get("volume", 0) or 0)
-    except (TypeError, ValueError):
-        return 0.0
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 async def _discover_markets(
@@ -173,7 +222,11 @@ async def _discover_markets(
     http_client: nautilus_pyo3.HttpClient,
 ) -> list[dict]:
     """
-    Discover open Kalshi markets sorted by volume descending.
+    Discover open Kalshi markets sorted by 24-hour volume descending.
+
+    Mirrors the Polymarket discovery method: ranks by 24h activity, filters
+    to markets with genuine uncertainty (price in [PRICE_MIN, PRICE_MAX]) and
+    enough time left before resolution (>= MIN_DAYS_TO_RESOLUTION out).
 
     Uses the ``/events`` endpoint with ``with_nested_markets=true`` to obtain
     both the ``series_ticker`` (on the event) and full market dicts in one pass.
@@ -189,7 +242,7 @@ async def _discover_markets(
     while len(all_markets) < candidate_limit:
         params: dict[str, str] = {
             "status": "open",
-            "limit": "50",
+            "limit": "200",
             "with_nested_markets": "true",
         }
         if cursor:
@@ -222,8 +275,33 @@ async def _discover_markets(
         if not cursor:
             break
 
-    all_markets.sort(key=_vol, reverse=True)
-    return all_markets[:candidate_limit]
+    now = datetime.now(UTC)
+    min_end = now + timedelta(days=MIN_DAYS_TO_RESOLUTION)
+
+    skipped = {"price": 0, "end_date": 0, "no_volume": 0}
+    filtered: list[dict] = []
+    for m in all_markets:
+        if _vol24h(m) <= 0:
+            skipped["no_volume"] += 1
+            continue
+        price = _yes_price_kalshi(m)
+        if price is None or not (PRICE_MIN <= price <= PRICE_MAX):
+            skipped["price"] += 1
+            continue
+        end = _end_date_kalshi(m)
+        if end is not None and end < min_end:
+            skipped["end_date"] += 1
+            continue
+        filtered.append(m)
+
+    filtered.sort(key=_vol24h, reverse=True)
+    print(
+        f"  Selected {min(len(filtered), candidate_limit)} markets "
+        f"(skipped: {skipped['price']} by price, "
+        f"{skipped['end_date']} resolving soon, "
+        f"{skipped['no_volume']} inactive)"
+    )
+    return filtered[:candidate_limit]
 
 
 async def _load_market(
@@ -240,7 +318,7 @@ async def _load_market(
     """
     ticker = market["ticker"]
     try:
-        instrument = _market_dict_to_instrument(market)
+        instrument = market_dict_to_instrument(market)
         series_ticker = market["series_ticker"]
         loader = KalshiDataLoader(
             instrument=instrument,
@@ -385,9 +463,9 @@ async def run() -> None:
         default_quota=nautilus_pyo3.Quota.rate_per_second(10),
     )
 
-    print(f"Fetching top {CANDIDATE_LIMIT} open markets by volume...")
+    print(f"Discovering top {MAX_MARKETS} active Kalshi markets by 24h volume...")
     candidates = await _discover_markets(CANDIDATE_LIMIT, http_client)
-    print(f"Ranked {len(candidates)} candidates → scanning for {MIN_BARS}+ bars...")
+    print(f"Found {len(candidates)} markets → scanning for {MIN_BARS}+ bars...")
 
     # Brief pause to let the rate-limit window reset after discovery.
     await asyncio.sleep(2)

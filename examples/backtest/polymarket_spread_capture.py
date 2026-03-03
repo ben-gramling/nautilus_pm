@@ -16,34 +16,34 @@ from datetime import timedelta
 from decimal import Decimal
 
 import msgspec
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 
-from nautilus_trader.adapters.polymarket import POLYMARKET_VENUE  # type: ignore[import-not-found]
+from nautilus_trader.adapters.polymarket import POLYMARKET_VENUE
 from nautilus_trader.adapters.polymarket import (
-    PolymarketDataLoader,  # type: ignore[import-not-found]
+    PolymarketDataLoader,
 )
-from nautilus_trader.adapters.polymarket.common.parsing import (  # type: ignore[import-not-found]
+from nautilus_trader.adapters.polymarket.common.parsing import (
     calculate_commission,
 )
-from nautilus_trader.analysis.config import TearsheetConfig  # type: ignore[import-not-found]
-from nautilus_trader.analysis.tearsheet import create_tearsheet  # type: ignore[import-not-found]
-from nautilus_trader.backtest.config import BacktestEngineConfig  # type: ignore[import-not-found]
-from nautilus_trader.backtest.engine import BacktestEngine  # type: ignore[import-not-found]
-from nautilus_trader.backtest.models import FeeModel  # type: ignore[import-not-found]
-from nautilus_trader.config import LoggingConfig  # type: ignore[import-not-found]
-from nautilus_trader.core import nautilus_pyo3  # type: ignore[import-not-found]
-from nautilus_trader.model.currencies import USDC_POS  # type: ignore[import-not-found]
-from nautilus_trader.model.data import TradeTick  # type: ignore[import-not-found]
-from nautilus_trader.model.enums import AccountType  # type: ignore[import-not-found]
-from nautilus_trader.model.enums import OmsType  # type: ignore[import-not-found]
-from nautilus_trader.model.enums import OrderSide  # type: ignore[import-not-found]
-from nautilus_trader.model.enums import TimeInForce  # type: ignore[import-not-found]
-from nautilus_trader.model.identifiers import InstrumentId  # type: ignore[import-not-found]
-from nautilus_trader.model.identifiers import TraderId  # type: ignore[import-not-found]
-from nautilus_trader.model.objects import Money  # type: ignore[import-not-found]
-from nautilus_trader.risk.config import RiskEngineConfig  # type: ignore[import-not-found]
-from nautilus_trader.trading.strategy import Strategy  # type: ignore[import-not-found]
-from nautilus_trader.trading.strategy import StrategyConfig  # type: ignore[import-not-found]
+from nautilus_trader.analysis.config import TearsheetConfig
+from nautilus_trader.analysis.tearsheet import create_tearsheet
+from nautilus_trader.backtest.config import BacktestEngineConfig
+from nautilus_trader.backtest.engine import BacktestEngine
+from nautilus_trader.backtest.models import FeeModel
+from nautilus_trader.config import LoggingConfig
+from nautilus_trader.core import nautilus_pyo3
+from nautilus_trader.model.currencies import USDC_POS
+from nautilus_trader.model.data import TradeTick
+from nautilus_trader.model.enums import AccountType
+from nautilus_trader.model.enums import OmsType
+from nautilus_trader.model.enums import OrderSide
+from nautilus_trader.model.enums import TimeInForce
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import TraderId
+from nautilus_trader.model.objects import Money
+from nautilus_trader.risk.config import RiskEngineConfig
+from nautilus_trader.trading.strategy import Strategy
+from nautilus_trader.trading.strategy import StrategyConfig
 
 
 class PolymarketFeeModel(FeeModel):
@@ -59,7 +59,7 @@ class PolymarketFeeModel(FeeModel):
     Exponent is 1 for crypto markets (~175 bps) and 2 for sports (~2500 bps).
     """
 
-    def get_commission(self, order, fill_qty, fill_px, instrument) -> Money:
+    def get_commission(self, order, fill_qty, fill_px, instrument) -> Money:  # type: ignore[no-untyped-def]
         taker_fee_dec = instrument.taker_fee  # decimal fraction (bps / 10_000)
         fee_rate_bps = taker_fee_dec * Decimal(10_000)
         if fee_rate_bps <= 0:
@@ -149,17 +149,17 @@ class SpreadCapture(Strategy):
                 self.close_all_positions(self.config.instrument_id)
                 self._pending = True
 
-    def on_order_filled(self, event) -> None:
+    def on_order_filled(self, event) -> None:  # type: ignore[no-untyped-def]
         if event.order_side == OrderSide.BUY:
             self._entry_price = float(event.last_px)
         else:
             self._entry_price = None
         self._pending = False
 
-    def on_order_rejected(self, event) -> None:
+    def on_order_rejected(self, event) -> None:  # type: ignore[no-untyped-def]
         self._pending = False
 
-    def on_order_canceled(self, event) -> None:
+    def on_order_canceled(self, event) -> None:  # type: ignore[no-untyped-def]
         self._pending = False
 
     def on_stop(self) -> None:
@@ -264,7 +264,7 @@ async def _discover_slugs(max_markets: int) -> list[str]:
     return slugs
 
 
-async def _load_market(slug: str, start: pd.Timestamp, end: pd.Timestamp):
+async def _load_market(slug: str, start: pd.Timestamp, end: pd.Timestamp) -> tuple[PolymarketDataLoader, list] | None:
     """Fetch price-history ticks for one market slug.  Returns None if data is insufficient."""
     try:
         loader = await PolymarketDataLoader.from_market_slug(slug)

@@ -140,9 +140,9 @@ def run_backtest() -> None:
         "display.width",
         300,
     ):
-        print(engine.trader.generate_account_report(kalshi_venue))
-        print(engine.trader.generate_order_fills_report())
-        print(engine.trader.generate_positions_report())
+        print(engine.trader.generate_account_report(kalshi_venue))  # pyright: ignore[reportOptionalMemberAccess]
+        print(engine.trader.generate_order_fills_report())  # pyright: ignore[reportOptionalMemberAccess]
+        print(engine.trader.generate_positions_report())  # pyright: ignore[reportOptionalMemberAccess]
 
     # Generate interactive tearsheet (requires: pip install "plotly>=6.3.1")
     try:
