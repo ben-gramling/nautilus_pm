@@ -57,6 +57,7 @@ if str(_HERE) not in sys.path:
 from kalshi_spread_strategy import KalshiSpreadCapture  # noqa: E402
 from kalshi_spread_strategy import KalshiSpreadCaptureConfig  # noqa: E402
 
+from nautilus_trader.adapters.kalshi.fee_model import KalshiProportionalFeeModel  # noqa: E402
 from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader  # noqa: E402
 from nautilus_trader.analysis.config import TearsheetConfig  # noqa: E402
 from nautilus_trader.analysis.tearsheet import create_tearsheet  # noqa: E402
@@ -152,6 +153,7 @@ def run_backtest(instrument, ticks: list) -> BacktestEngine:
         account_type=AccountType.CASH,
         base_currency=USD_CURRENCY,
         starting_balances=[Money(STARTING_BALANCE, USD_CURRENCY)],
+        fee_model=KalshiProportionalFeeModel(),
     )
 
     engine.add_instrument(instrument)
@@ -200,6 +202,11 @@ async def main() -> None:
     engine.reset()
     engine.dispose()
 
+
+NAME = "Kalshi Spread Capture"
+DESCRIPTION = "Market-making strategy on synthesized OHLC ticks from the Kalshi REST API"
+
+run = main
 
 if __name__ == "__main__":
     asyncio.run(main())

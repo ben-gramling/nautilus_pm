@@ -672,6 +672,35 @@ pytest-v2:  #-- Run v2 Python tests
 	$(info $(M) Running v2 Python tests...)
 	$Q cd python && uv run --no-sync pytest tests/ -v
 
+#== Backtests
+
+PYTHON := .venv/bin/python
+
+# Path to a sibling strategy repo whose strategies/ and private_strategies/
+# subdirs will appear in the interactive menu alongside the local examples.
+# Override on the command line: make backtest EXTRA_STRATEGIES_DIRS=/other/path
+PREDICTION_MARKET_REPO ?= /Users/evankolberg/prediction-market-backtesting
+EXTRA_STRATEGIES_DIRS  ?= $(PREDICTION_MARKET_REPO)/strategies:$(PREDICTION_MARKET_REPO)/private_strategies
+
+.PHONY: backtest
+backtest:  #-- Interactive menu: choose a backtest to run (includes external strategies)
+	EXTRA_STRATEGIES_DIRS="$(EXTRA_STRATEGIES_DIRS)" $(PYTHON) main.py
+
+.PHONY: backtest-kalshi-ema
+backtest-kalshi-ema:  #-- Kalshi: fetch hourly bars → write catalog → run EMA-cross strategy
+	$(PYTHON) examples/backtest/kalshi_ema_bars.py
+
+.PHONY: backtest-kalshi-spread
+backtest-kalshi-spread:  #-- Kalshi: fetch hourly bars → synthesize ticks → run spread-capture strategy
+	$(PYTHON) examples/backtest/kalshi_spread_capture.py
+
+.PHONY: test-fees
+test-fees:  #-- Run Kalshi + Polymarket fee-model unit tests
+	$(PYTHON) -m pytest \
+		tests/unit_tests/adapters/kalshi/test_providers.py \
+		tests/integration_tests/adapters/polymarket/test_parsing.py \
+		-v --override-ini="addopts=" --override-ini="testpaths=" -p no:doctest
+
 #== CLI Tools
 
 .PHONY: install-cli

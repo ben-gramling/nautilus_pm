@@ -60,6 +60,7 @@ from nautilus_trader.backtest.config import BacktestDataConfig  # noqa: E402
 from nautilus_trader.backtest.config import BacktestEngineConfig  # noqa: E402
 from nautilus_trader.backtest.config import BacktestRunConfig  # noqa: E402
 from nautilus_trader.backtest.config import BacktestVenueConfig  # noqa: E402
+from nautilus_trader.backtest.config import ImportableFeeModelConfig  # noqa: E402
 from nautilus_trader.backtest.node import BacktestNode  # noqa: E402
 from nautilus_trader.config import ImportableStrategyConfig  # noqa: E402
 from nautilus_trader.config import LoggingConfig  # noqa: E402
@@ -113,6 +114,11 @@ def run_backtest() -> None:
         account_type="CASH",
         base_currency="USD",
         starting_balances=["10000 USD"],
+        fee_model=ImportableFeeModelConfig(
+            fee_model_path="nautilus_trader.adapters.kalshi.fee_model:KalshiProportionalFeeModel",
+            config_path="nautilus_trader.adapters.kalshi.fee_model:KalshiProportionalFeeModelConfig",
+            config={"fee_rate": "0.07"},
+        ),
     )
 
     data_config = BacktestDataConfig(
@@ -174,6 +180,14 @@ def run_backtest() -> None:
     node.dispose()
 
 
-if __name__ == "__main__":
-    asyncio.run(fetch_and_catalog())
+NAME = "Kalshi EMA Cross"
+DESCRIPTION = "EMA-cross long-only on hourly bars (fetches API data, catalogs, runs strategy)"
+
+
+async def run() -> None:
+    await fetch_and_catalog()
     run_backtest()
+
+
+if __name__ == "__main__":
+    asyncio.run(run())
