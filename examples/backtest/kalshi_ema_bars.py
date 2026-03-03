@@ -28,22 +28,45 @@ range you want to backtest.
 """
 
 import asyncio
+import sys
 from decimal import Decimal
+from pathlib import Path
 
 import pandas as pd
 
-from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader
-from nautilus_trader.backtest.config import BacktestDataConfig
-from nautilus_trader.backtest.config import BacktestEngineConfig
-from nautilus_trader.backtest.config import BacktestRunConfig
-from nautilus_trader.backtest.config import BacktestVenueConfig
-from nautilus_trader.backtest.node import BacktestNode
-from nautilus_trader.config import ImportableStrategyConfig
-from nautilus_trader.config import LoggingConfig
-from nautilus_trader.model.data import Bar
-from nautilus_trader.model.identifiers import TraderId
-from nautilus_trader.model.identifiers import Venue
-from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
+
+# ---------------------------------------------------------------------------
+# sys.path: wheel takes priority for compiled extensions, but we extend
+# nautilus_trader.adapters.__path__ so the local kalshi adapter is findable.
+# ---------------------------------------------------------------------------
+_NAUTILUS_SRC = Path(__file__).resolve().parents[2]  # nautilus_pm/
+_VENV_SITE = _NAUTILUS_SRC / ".venv/lib/python3.13/site-packages"
+if str(_VENV_SITE) not in sys.path:
+    sys.path.insert(0, str(_VENV_SITE))
+if str(_NAUTILUS_SRC) in sys.path:
+    sys.path.remove(str(_NAUTILUS_SRC))
+
+import nautilus_trader.adapters as _nt_adapters  # noqa: E402
+
+
+_LOCAL_ADAPTERS = _NAUTILUS_SRC / "nautilus_trader" / "adapters"
+if str(_LOCAL_ADAPTERS) not in _nt_adapters.__path__:
+    _nt_adapters.__path__.append(str(_LOCAL_ADAPTERS))
+
+from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader  # noqa: E402
+from nautilus_trader.analysis.config import TearsheetConfig  # noqa: E402
+from nautilus_trader.analysis.tearsheet import create_tearsheet  # noqa: E402
+from nautilus_trader.backtest.config import BacktestDataConfig  # noqa: E402
+from nautilus_trader.backtest.config import BacktestEngineConfig  # noqa: E402
+from nautilus_trader.backtest.config import BacktestRunConfig  # noqa: E402
+from nautilus_trader.backtest.config import BacktestVenueConfig  # noqa: E402
+from nautilus_trader.backtest.node import BacktestNode  # noqa: E402
+from nautilus_trader.config import ImportableStrategyConfig  # noqa: E402
+from nautilus_trader.config import LoggingConfig  # noqa: E402
+from nautilus_trader.model.data import Bar  # noqa: E402
+from nautilus_trader.model.identifiers import TraderId  # noqa: E402
+from nautilus_trader.model.identifiers import Venue  # noqa: E402
+from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +166,10 @@ def run_backtest() -> None:
         print(engine.trader.generate_account_report(kalshi_venue))
         print(engine.trader.generate_order_fills_report())
         print(engine.trader.generate_positions_report())
+
+    tearsheet_path = "./kalshi_ema_tearsheet.html"
+    create_tearsheet(engine, tearsheet_path, config=TearsheetConfig(theme="nautilus_dark"))
+    print(f"Tearsheet saved to {tearsheet_path}")
 
     node.dispose()
 
