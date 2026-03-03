@@ -55,6 +55,7 @@ from nautilus_trader.analysis.tearsheet import create_tearsheet  # noqa: E402
 from nautilus_trader.backtest.config import BacktestEngineConfig  # noqa: E402
 from nautilus_trader.backtest.engine import BacktestEngine  # noqa: E402
 from nautilus_trader.config import LoggingConfig  # noqa: E402
+from nautilus_trader.core import nautilus_pyo3  # noqa: E402
 from nautilus_trader.model.data import TradeTick  # noqa: E402
 from nautilus_trader.model.enums import AccountType  # noqa: E402
 from nautilus_trader.model.enums import AggressorSide  # noqa: E402
@@ -192,10 +193,10 @@ async def _discover_tickers(max_markets: int) -> list[str]:
 # Data loading
 # ---------------------------------------------------------------------------
 
-async def _load_market(ticker: str) -> tuple | None:
+async def _load_market(ticker: str, http_client: nautilus_pyo3.HttpClient) -> tuple | None:
     """Fetch bars for one Kalshi ticker and synthesize OHLC trade ticks."""
     try:
-        loader = await KalshiDataLoader.from_market_ticker(ticker)
+        loader = await KalshiDataLoader.from_market_ticker(ticker, http_client=http_client)
         bars = await loader.load_bars(
             start=pd.Timestamp(START, tz="UTC"),
             end=pd.Timestamp(END, tz="UTC"),
@@ -319,7 +320,12 @@ async def run() -> None:
     tickers = await _discover_tickers(MAX_MARKETS)
     print(f"Found {len(tickers)} markets -> fetching bars in parallel...\n")
 
-    loaded = await asyncio.gather(*[_load_market(t) for t in tickers])
+    http_client = nautilus_pyo3.HttpClient(
+        default_quota=nautilus_pyo3.Quota.rate_per_second(10),
+    )
+    loaded = []
+    for t in tickers:
+        loaded.append(await _load_market(t, http_client))
 
     results: list[dict] = []
     for ticker, market_data in zip(tickers, loaded, strict=True):
