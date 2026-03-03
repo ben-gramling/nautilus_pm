@@ -48,6 +48,8 @@ if str(_LOCAL_ADAPTERS) not in _nt_adapters.__path__:
 
 from nautilus_trader.adapters.kalshi.fee_model import KalshiProportionalFeeModel  # noqa: E402
 from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader  # noqa: E402
+from nautilus_trader.adapters.kalshi.providers import KALSHI_REST_BASE  # noqa: E402
+from nautilus_trader.adapters.kalshi.providers import _KalshiHttpClient  # noqa: E402
 from nautilus_trader.analysis.config import TearsheetConfig  # noqa: E402
 from nautilus_trader.analysis.tearsheet import create_tearsheet  # noqa: E402
 from nautilus_trader.backtest.config import BacktestEngineConfig  # noqa: E402
@@ -74,10 +76,8 @@ NAME = "Kalshi Spread Capture"
 DESCRIPTION = "Mean-reversion spread capture across Kalshi markets"
 
 # ── Configure here ────────────────────────────────────────────────────────────
-MARKET_TICKERS = [
-    "KXFEDCHAIRNOM-29-KW",
-    # Add more Kalshi market tickers here
-]
+MAX_MARKETS     = 15            # top N markets by volume to backtest
+MIN_TICKS       = 50            # skip markets with fewer synthesized ticks
 START           = "2026-01-01"  # ISO 8601 UTC
 END             = "2026-03-01"  # ISO 8601 UTC (exclusive)
 VWAP_WINDOW     = 20
@@ -86,7 +86,6 @@ TAKE_PROFIT     = 0.003
 STOP_LOSS       = 0.015
 TRADE_SIZE      = Decimal(1)
 INITIAL_CASH    = 10_000.0
-MIN_TICKS       = 50            # skip markets with fewer synthesized ticks
 # ─────────────────────────────────────────────────────────────────────────────
 
 KALSHI_VENUE = Venue("KALSHI")
@@ -172,6 +171,24 @@ class SpreadCapture(Strategy):
 
 
 # ---------------------------------------------------------------------------
+# Market discovery
+# ---------------------------------------------------------------------------
+
+async def _discover_tickers(max_markets: int) -> list[str]:
+    """Query Kalshi REST API for top active markets by volume."""
+    client = _KalshiHttpClient(base_url=KALSHI_REST_BASE)
+    markets = await client.get_markets()
+
+    def _vol(m: dict) -> float:
+        with contextlib.suppress(TypeError, ValueError):
+            return float(m.get("volume", 0) or 0)
+        return 0.0
+
+    markets.sort(key=_vol, reverse=True)
+    return [m["ticker"] for m in markets if m.get("ticker")][:max_markets]
+
+
+# ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
@@ -238,7 +255,7 @@ def _run_backtest(ticker: str, instrument, ticks: list) -> dict:
     engine = BacktestEngine(
         config=BacktestEngineConfig(
             trader_id=TraderId("BACKTESTER-001"),
-            logging=LoggingConfig(log_level="ERROR"),
+            logging=LoggingConfig(log_level="INFO"),
         )
     )
     engine.add_venue(
@@ -298,12 +315,14 @@ def _print_summary(results: list[dict]) -> None:
 
 
 async def run() -> None:
-    print(f"Fetching data for {len(MARKET_TICKERS)} Kalshi market(s)...\n")
+    print(f"Discovering top {MAX_MARKETS} active Kalshi markets by volume...")
+    tickers = await _discover_tickers(MAX_MARKETS)
+    print(f"Found {len(tickers)} markets -> fetching bars in parallel...\n")
 
-    loaded = await asyncio.gather(*[_load_market(t) for t in MARKET_TICKERS])
+    loaded = await asyncio.gather(*[_load_market(t) for t in tickers])
 
     results: list[dict] = []
-    for ticker, market_data in zip(MARKET_TICKERS, loaded, strict=True):
+    for ticker, market_data in zip(tickers, loaded, strict=True):
         if market_data is None:
             continue
         instrument, ticks = market_data
