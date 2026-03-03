@@ -80,14 +80,16 @@ NAME = "polymarket_spread_capture"
 DESCRIPTION = "Mean-reversion spread capture across Polymarket markets"
 
 # ── Configure here ────────────────────────────────────────────────────────────
-MARKET_SLUG = "gta-vi-released-before-june-2026"
 LOOKBACK_DAYS = 7  # days of 1-min price-history ticks to fetch (API max ~10 days)
 MAX_MARKETS = 15
-MIN_TRADES = 50
+MIN_TRADES = 100           # need enough oscillations for mean-reversion
 VWAP_WINDOW = 20
-ENTRY_THRESHOLD = 0.001
-TAKE_PROFIT = 0.003
-STOP_LOSS = 0.015
+ENTRY_THRESHOLD = 0.005    # 0.5% deviation from rolling avg to enter
+TAKE_PROFIT = 0.008        # 0.8% recovery to exit with profit
+STOP_LOSS = 0.020          # 2.0% adverse move to cut loss
+# Only trade markets whose YES price is in this range — avoids near-resolved markets
+PRICE_MIN = 0.25
+PRICE_MAX = 0.75
 TRADE_SIZE = Decimal(20)
 INITIAL_CASH = 10_000.0
 _GAMMA_API = "https://gamma-api.polymarket.com/markets"
@@ -98,9 +100,9 @@ class SpreadCaptureConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg
     instrument_id: InstrumentId
     trade_size: Decimal = Decimal(20)
     vwap_window: int = 20
-    entry_threshold: float = 0.005
-    take_profit: float = 0.005
-    stop_loss: float = 0.015
+    entry_threshold: float = ENTRY_THRESHOLD
+    take_profit: float = TAKE_PROFIT
+    stop_loss: float = STOP_LOSS
 
 
 class SpreadCapture(Strategy):
@@ -177,7 +179,15 @@ class SpreadCapture(Strategy):
 
 
 async def _discover_slugs(max_markets: int) -> list[str]:
-    """Query Polymarket Gamma API for top active markets by volume."""
+    """Query Polymarket Gamma API for markets suited to spread capture.
+
+    Selection criteria (all must pass):
+    - YES price in [PRICE_MIN, PRICE_MAX] — genuine uncertainty, not near-resolved
+    - endDate at least LOOKBACK_DAYS out — won't trend monotonically to resolution
+    - volumeNum24hr > 0 — actively trading today
+
+    Sorted by 24h volume (not lifetime) so we get markets with current activity.
+    """
     client = nautilus_pyo3.HttpClient(
         default_quota=nautilus_pyo3.Quota.rate_per_second(20),
     )
@@ -187,29 +197,70 @@ async def _discover_slugs(max_markets: int) -> list[str]:
             "active": "true",
             "closed": "false",
             "archived": "false",
-            "limit": "100",
+            "limit": "200",
         },
     )
     if resp.status != 200:
         return []
 
     markets = msgspec.json.decode(resp.body)
+    now = datetime.now(UTC)
+    min_end = now + timedelta(days=LOOKBACK_DAYS)
 
-    def _vol(m: dict) -> float:
+    def _vol24h(m: dict) -> float:
         try:
-            return float(m.get("volume", 0) or 0)
+            return float(m.get("volume24hr", 0) or 0)
         except (TypeError, ValueError):
             return 0.0
 
-    markets.sort(key=_vol, reverse=True)
+    def _yes_price(m: dict) -> float | None:
+        raw = m.get("outcomePrices")
+        if not raw:
+            return None
+        try:
+            prices = msgspec.json.decode(raw) if isinstance(raw, bytes | str) else raw
+            return float(prices[0])
+        except Exception:
+            return None
+
+    def _end_date(m: dict) -> datetime | None:
+        raw = m.get("endDate") or m.get("end_date_iso")
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    markets.sort(key=_vol24h, reverse=True)
 
     slugs: list[str] = []
+    skipped = {"price": 0, "end_date": 0, "no_volume": 0}
     for m in markets:
         slug = m.get("slug", "")
-        if slug:
-            slugs.append(slug)
+        if not slug:
+            continue
+        if _vol24h(m) <= 0:
+            skipped["no_volume"] += 1
+            continue
+        price = _yes_price(m)
+        if price is None or not (PRICE_MIN <= price <= PRICE_MAX):
+            skipped["price"] += 1
+            continue
+        end = _end_date(m)
+        if end is not None and end < min_end:
+            skipped["end_date"] += 1
+            continue
+        slugs.append(slug)
         if len(slugs) >= max_markets:
             break
+
+    print(
+        f"  Selected {len(slugs)} markets "
+        f"(skipped: {skipped['price']} by price, "
+        f"{skipped['end_date']} resolving soon, "
+        f"{skipped['no_volume']} inactive)"
+    )
     return slugs
 
 
