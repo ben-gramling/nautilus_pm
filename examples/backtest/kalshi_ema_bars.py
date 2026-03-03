@@ -28,46 +28,22 @@ range you want to backtest.
 """
 
 import asyncio
-import sys
 from decimal import Decimal
-from pathlib import Path
 
 import pandas as pd
 
-
-# ---------------------------------------------------------------------------
-# sys.path: wheel takes priority for compiled extensions, but we extend
-# nautilus_trader.adapters.__path__ so the local kalshi adapter is findable.
-# ---------------------------------------------------------------------------
-_NAUTILUS_SRC = Path(__file__).resolve().parents[2]  # nautilus_pm/
-_VENV_SITE = _NAUTILUS_SRC / ".venv/lib/python3.13/site-packages"
-if str(_VENV_SITE) not in sys.path:
-    sys.path.insert(0, str(_VENV_SITE))
-if str(_NAUTILUS_SRC) in sys.path:
-    sys.path.remove(str(_NAUTILUS_SRC))
-
-import nautilus_trader.adapters as _nt_adapters  # noqa: E402
-
-
-_LOCAL_ADAPTERS = _NAUTILUS_SRC / "nautilus_trader" / "adapters"
-if str(_LOCAL_ADAPTERS) not in _nt_adapters.__path__:
-    _nt_adapters.__path__.append(str(_LOCAL_ADAPTERS))
-
-from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader  # noqa: E402
-from nautilus_trader.analysis.config import TearsheetConfig  # noqa: E402
-from nautilus_trader.analysis.tearsheet import create_tearsheet  # noqa: E402
-from nautilus_trader.backtest.config import BacktestDataConfig  # noqa: E402
-from nautilus_trader.backtest.config import BacktestEngineConfig  # noqa: E402
-from nautilus_trader.backtest.config import BacktestRunConfig  # noqa: E402
-from nautilus_trader.backtest.config import BacktestVenueConfig  # noqa: E402
-from nautilus_trader.backtest.config import ImportableFeeModelConfig  # noqa: E402
-from nautilus_trader.backtest.node import BacktestNode  # noqa: E402
-from nautilus_trader.config import ImportableStrategyConfig  # noqa: E402
-from nautilus_trader.config import LoggingConfig  # noqa: E402
-from nautilus_trader.model.data import Bar  # noqa: E402
-from nautilus_trader.model.identifiers import TraderId  # noqa: E402
-from nautilus_trader.model.identifiers import Venue  # noqa: E402
-from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog  # noqa: E402
+from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader
+from nautilus_trader.backtest.config import BacktestDataConfig
+from nautilus_trader.backtest.config import BacktestEngineConfig
+from nautilus_trader.backtest.config import BacktestRunConfig
+from nautilus_trader.backtest.config import BacktestVenueConfig
+from nautilus_trader.backtest.node import BacktestNode
+from nautilus_trader.config import ImportableStrategyConfig
+from nautilus_trader.config import LoggingConfig
+from nautilus_trader.model.data import Bar
+from nautilus_trader.model.identifiers import TraderId
+from nautilus_trader.model.identifiers import Venue
+from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
 
 
 # ---------------------------------------------------------------------------
@@ -114,11 +90,6 @@ def run_backtest() -> None:
         account_type="CASH",
         base_currency="USD",
         starting_balances=["10000 USD"],
-        fee_model=ImportableFeeModelConfig(
-            fee_model_path="nautilus_trader.adapters.kalshi.fee_model:KalshiProportionalFeeModel",
-            config_path="nautilus_trader.adapters.kalshi.fee_model:KalshiProportionalFeeModelConfig",
-            config={"fee_rate": "0.07"},
-        ),
     )
 
     data_config = BacktestDataConfig(
@@ -173,21 +144,26 @@ def run_backtest() -> None:
         print(engine.trader.generate_order_fills_report())
         print(engine.trader.generate_positions_report())
 
-    tearsheet_path = "./kalshi_ema_tearsheet.html"
-    create_tearsheet(engine, tearsheet_path, config=TearsheetConfig(theme="nautilus_dark"))
-    print(f"Tearsheet saved to {tearsheet_path}")
+    # Generate interactive tearsheet (requires: pip install "plotly>=6.3.1")
+    try:
+        from nautilus_trader.analysis import TearsheetConfig
+        from nautilus_trader.analysis.tearsheet import create_tearsheet
+
+        print("\nGenerating tearsheet...")
+        # Themes: "plotly_white", "plotly_dark", "nautilus", "nautilus_dark"
+        tearsheet_config = TearsheetConfig(theme="plotly_white")
+        create_tearsheet(
+            engine=engine,
+            output_path="kalshi_tearsheet.html",
+            config=tearsheet_config,
+        )
+        print("Tearsheet saved to kalshi_tearsheet.html")
+    except ImportError:
+        print("\nSkipping tearsheet (plotly not installed: pip install 'plotly>=6.3.1')")
 
     node.dispose()
 
 
-NAME = "Kalshi EMA Cross"
-DESCRIPTION = "EMA-cross long-only on hourly bars (fetches API data, catalogs, runs strategy)"
-
-
-async def run() -> None:
-    await fetch_and_catalog()
-    run_backtest()
-
-
 if __name__ == "__main__":
-    asyncio.run(run())
+    asyncio.run(fetch_and_catalog())
+    run_backtest()
