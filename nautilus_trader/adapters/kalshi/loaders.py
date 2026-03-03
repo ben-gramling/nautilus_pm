@@ -23,7 +23,7 @@ import msgspec
 import pandas as pd
 
 from nautilus_trader.adapters.kalshi.providers import KALSHI_REST_BASE
-from nautilus_trader.adapters.kalshi.providers import _market_dict_to_instrument
+from nautilus_trader.adapters.kalshi.providers import market_dict_to_instrument
 from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.core.datetime import secs_to_nanos
 from nautilus_trader.model.data import Bar
@@ -151,7 +151,7 @@ class KalshiDataLoader:
 
         data = msgspec.json.decode(response.body)
         market = data["market"]
-        instrument = _market_dict_to_instrument(market)
+        instrument = market_dict_to_instrument(market)
 
         event_ticker = market["event_ticker"]
         event_response = await client.get(url=f"{KALSHI_REST_BASE}/events/{event_ticker}")
