@@ -51,10 +51,14 @@ NAME = "kalshi_spread_capture"
 DESCRIPTION = "Mean-reversion spread capture across Kalshi markets"
 
 # ── Configure here ────────────────────────────────────────────────────────────
-LOOKBACK_DAYS = 7  # days of bar history to fetch per market
-MIN_BARS = 20  # skip markets with fewer non-empty minute bars
-MAX_MARKETS = 15  # how many qualifying markets to backtest
-CANDIDATE_LIMIT = 400  # how many open markets to fetch and rank by volume
+LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "7"))
+# Prefer high-density markets so charts have rich point counts like MKHA.
+MIN_BARS = int(os.getenv("MIN_BARS", "1000"))
+MAX_MARKETS = int(os.getenv("MAX_MARKETS", "15"))
+CANDIDATE_LIMIT = int(os.getenv("CANDIDATE_LIMIT", "400"))
+MIN_PRICE_RANGE = float(os.getenv("MIN_PRICE_RANGE", "0.15"))
+# Stop scanning after this many candidates even if MAX_MARKETS is not reached.
+MAX_SCANNED_MARKETS = int(os.getenv("MAX_SCANNED_MARKETS", "120"))
 # Only trade markets whose YES price is in this range — avoids fully-resolved markets
 PRICE_MIN = 0.05
 PRICE_MAX = 0.95
@@ -352,6 +356,15 @@ async def _load_market(
         if len(bars) < MIN_BARS:
             print(f"  skip {ticker}: fewer than {MIN_BARS} bars")
             return None
+
+        closes = [float(bar.close) for bar in bars]
+        if closes:
+            price_range = max(closes) - min(closes)
+            if price_range < MIN_PRICE_RANGE:
+                print(
+                    f"  skip {ticker}: price range {price_range:.3f} < {MIN_PRICE_RANGE:.3f}"
+                )
+                return None
         return loader, bars
     except Exception as exc:
         print(f"  skip {ticker}: {exc}")
@@ -581,9 +594,17 @@ async def run() -> None:
     await asyncio.sleep(2)
 
     results: list[dict] = []
+    scanned = 0
     for market in candidates:
         if len(results) >= MAX_MARKETS:
             break
+        if scanned >= MAX_SCANNED_MARKETS:
+            print(
+                f"Reached scan cap ({MAX_SCANNED_MARKETS}) with "
+                f"{len(results)} qualifying markets."
+            )
+            break
+        scanned += 1
         market_data = await _load_market(market, start, end, http_client)
         if market_data is None:
             continue

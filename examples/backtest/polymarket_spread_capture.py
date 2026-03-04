@@ -46,9 +46,12 @@ NAME = "polymarket_spread_capture"
 DESCRIPTION = "Mean-reversion spread capture across Polymarket markets"
 
 # ── Configure here ────────────────────────────────────────────────────────────
-LOOKBACK_DAYS = 7  # days of 1-min price-history ticks to fetch (API max ~10 days)
-MAX_MARKETS = 15
-MIN_TRADES = 100           # need enough oscillations for mean-reversion
+LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "14"))
+MAX_MARKETS = int(os.getenv("MAX_MARKETS", "15"))
+# Prefer high-density markets so charts have richer point counts.
+MIN_TRADES = int(os.getenv("MIN_TRADES", "200"))
+CANDIDATE_LIMIT = int(os.getenv("CANDIDATE_LIMIT", "120"))
+MIN_PRICE_RANGE = float(os.getenv("MIN_PRICE_RANGE", "0.15"))
 VWAP_WINDOW = 20
 ENTRY_THRESHOLD = 0.005    # 0.5% deviation from rolling avg to enter
 TAKE_PROFIT = 0.008        # 0.8% recovery to exit with profit
@@ -149,7 +152,7 @@ class SpreadCapture(Strategy):
         self._pending = True
 
 
-async def _discover_slugs(max_markets: int) -> list[str]:
+async def _discover_slugs(candidate_limit: int) -> list[str]:
     """Query Polymarket Gamma API for markets suited to spread capture.
 
     Selection criteria (all must pass):
@@ -218,7 +221,7 @@ async def _discover_slugs(max_markets: int) -> list[str]:
             skipped["end_date"] += 1
             continue
         slugs.append(slug)
-        if len(slugs) >= max_markets:
+        if len(slugs) >= candidate_limit:
             break
 
     print(
@@ -240,7 +243,16 @@ async def _load_market(
         loader = await PolymarketDataLoader.from_market_slug(slug)
         trades = await loader.load_trades(start, end)
         if len(trades) < MIN_TRADES:
+            print(f"  skip {slug}: fewer than {MIN_TRADES} trades")
             return None
+        prices = [float(tick.price) for tick in trades]
+        if prices:
+            price_range = max(prices) - min(prices)
+            if price_range < MIN_PRICE_RANGE:
+                print(
+                    f"  skip {slug}: price range {price_range:.3f} < {MIN_PRICE_RANGE:.3f}"
+                )
+                return None
         return loader, trades
     except Exception as exc:
         print(f"  skip {slug}: {exc}")
@@ -453,16 +465,17 @@ async def run() -> None:
     start = pd.Timestamp(now - timedelta(days=LOOKBACK_DAYS))
     end = pd.Timestamp(now)
 
-    print(f"Discovering top {MAX_MARKETS} active Polymarket markets by volume...")
-    slugs = await _discover_slugs(MAX_MARKETS)
+    print(f"Discovering top {CANDIDATE_LIMIT} active Polymarket markets by volume...")
+    slugs = await _discover_slugs(CANDIDATE_LIMIT)
     print(f"Found {len(slugs)} markets → fetching trades in parallel...\n")
 
     loaded = await asyncio.gather(*[_load_market(s, start, end) for s in slugs])
 
     results: list[dict] = []
     for slug, market_data in zip(slugs, loaded, strict=False):
+        if len(results) >= MAX_MARKETS:
+            break
         if market_data is None:
-            print(f"  skip {slug}: fewer than {MIN_TRADES} trades")
             continue
         loader, trades = market_data
         print(f"  {slug}: {len(trades)} trades → running backtest...")
