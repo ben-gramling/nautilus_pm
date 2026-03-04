@@ -22,7 +22,7 @@ import pytest
 from nautilus_trader.adapters.kalshi.config import KalshiDataClientConfig
 from nautilus_trader.adapters.kalshi.providers import KALSHI_TAKER_FEE_RATE
 from nautilus_trader.adapters.kalshi.providers import KalshiInstrumentProvider
-from nautilus_trader.adapters.kalshi.providers import market_dict_to_instrument
+from nautilus_trader.adapters.kalshi.providers import _market_dict_to_instrument
 from nautilus_trader.adapters.kalshi.providers import calculate_kalshi_commission
 
 
@@ -74,7 +74,7 @@ def test_calculate_kalshi_commission(
 
 
 # ---------------------------------------------------------------------------
-# market_dict_to_instrument fee assignment tests
+# _market_dict_to_instrument fee assignment tests
 # ---------------------------------------------------------------------------
 
 def _make_market_dict(**overrides) -> dict:
@@ -92,7 +92,7 @@ def _make_market_dict(**overrides) -> dict:
 def test_instrument_has_taker_fee():
     """Instruments should have the standard 7% taker fee by default."""
     market = _make_market_dict()
-    instrument = market_dict_to_instrument(market)
+    instrument = _market_dict_to_instrument(market)
     assert instrument.taker_fee == KALSHI_TAKER_FEE_RATE
 
 
@@ -100,7 +100,7 @@ def test_instrument_fee_waiver_active():
     """Active fee waiver should set taker_fee to zero."""
     future = datetime(2099, 1, 1, tzinfo=timezone.utc).isoformat()
     market = _make_market_dict(fee_waiver_expiration_time=future)
-    instrument = market_dict_to_instrument(market)
+    instrument = _market_dict_to_instrument(market)
     assert instrument.taker_fee == decimal.Decimal(0)
 
 
@@ -108,12 +108,12 @@ def test_instrument_fee_waiver_expired():
     """Expired fee waiver should still apply the standard taker fee."""
     past = datetime(2020, 1, 1, tzinfo=timezone.utc).isoformat()
     market = _make_market_dict(fee_waiver_expiration_time=past)
-    instrument = market_dict_to_instrument(market)
+    instrument = _market_dict_to_instrument(market)
     assert instrument.taker_fee == KALSHI_TAKER_FEE_RATE
 
 
 def test_instrument_maker_fee_zero():
     """Maker fee should default to zero."""
     market = _make_market_dict()
-    instrument = market_dict_to_instrument(market)
+    instrument = _market_dict_to_instrument(market)
     assert instrument.maker_fee == decimal.Decimal(0)
