@@ -144,7 +144,7 @@ def _market_dict_to_instrument(market: dict) -> BinaryOption:
     )
 
 
-# Public alias retained for loader/backtest imports.
+# Backward-compatibility alias used by loaders/examples.
 market_dict_to_instrument = _market_dict_to_instrument
 
 

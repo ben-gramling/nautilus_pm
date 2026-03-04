@@ -505,6 +505,202 @@ def _build_portfolio_snapshots(
     return snapshots
 
 
+def _build_dense_timeline(
+    fills: list[Any],
+    market_prices: Mapping[str, Sequence[tuple[datetime, float]]],
+) -> pd.DatetimeIndex:
+    timeline: set[datetime] = set()
+    for points in market_prices.values():
+        for ts, _ in points:
+            timeline.add(ts)
+    for fill in fills:
+        timeline.add(fill.timestamp)
+    return pd.DatetimeIndex(sorted(timeline))
+
+
+def _dense_cash_series(
+    sparse_snapshots: list[Any],
+    dense_dt: pd.DatetimeIndex,
+    initial_cash: float,
+) -> np.ndarray:
+    sparse_df = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime([snapshot.timestamp for snapshot in sparse_snapshots]),
+            "cash": [float(snapshot.cash) for snapshot in sparse_snapshots],
+        },
+    ).sort_values("datetime")
+    sparse_df = sparse_df.drop_duplicates(subset=["datetime"], keep="last")
+
+    dense_df = pd.DataFrame({"datetime": dense_dt})
+    dense_df = pd.merge_asof(dense_df, sparse_df, on="datetime", direction="backward")
+    dense_df["cash"] = dense_df["cash"].ffill().fillna(float(initial_cash))
+    return dense_df["cash"].to_numpy(dtype=float)
+
+
+def _replay_fill_position_deltas(
+    fills: list[Any],
+    dense_dts: np.ndarray,
+) -> tuple[dict[str, np.ndarray], dict[str, float]]:
+    n_bars = len(dense_dts)
+    pos_changes: dict[str, np.ndarray] = {}
+    fill_price_map: dict[str, float] = {}
+
+    for fill in sorted(fills, key=lambda f: f.timestamp):
+        market_id = fill.market_id
+        delta = _signed_quantity(fill.action.value, fill.side.value, float(fill.quantity))
+        if delta == 0.0:
+            continue
+        if market_id not in pos_changes:
+            pos_changes[market_id] = np.zeros(n_bars, dtype=float)
+
+        ts64 = pd.Timestamp(fill.timestamp).to_datetime64()
+        bar_idx = int(np.searchsorted(dense_dts, ts64, side="right") - 1)
+        bar_idx = max(0, min(n_bars - 1, bar_idx))
+        pos_changes[market_id][bar_idx] += delta
+        fill_price_map[market_id] = float(fill.price)
+
+    return pos_changes, fill_price_map
+
+
+def _aligned_market_prices(
+    market_id: str,
+    market_prices: Mapping[str, Sequence[tuple[datetime, float]]],
+    dense_dts: np.ndarray,
+    n_bars: int,
+    fallback_price: float,
+) -> tuple[np.ndarray, np.datetime64 | None]:
+    recs = market_prices.get(market_id, [])
+    if not recs:
+        return np.full(n_bars, fallback_price, dtype=float), None
+
+    ts_arr = pd.to_datetime([ts for ts, _ in recs]).to_numpy(dtype="datetime64[ns]")
+    pr_arr = np.asarray([price for _, price in recs], dtype=float)
+
+    order = np.argsort(ts_arr)
+    ts_arr = ts_arr[order]
+    pr_arr = pr_arr[order]
+
+    idx = np.searchsorted(ts_arr, dense_dts, side="right") - 1
+    prices = np.full(n_bars, np.nan, dtype=float)
+    valid = idx >= 0
+    prices[valid] = pr_arr[idx[valid]]
+    prices[dense_dts < ts_arr[0]] = np.nan
+    prices[dense_dts > ts_arr[-1]] = np.nan
+    return prices, ts_arr[-1]
+
+
+def _apply_resolution_cutoffs(
+    pos_qty: dict[str, np.ndarray],
+    pos_changes: Mapping[str, np.ndarray],
+    market_last_ts: Mapping[str, np.datetime64 | None],
+    dense_dts: np.ndarray,
+) -> None:
+    n_bars = len(dense_dts)
+    for market_id, qty in pos_qty.items():
+        last_ts = market_last_ts.get(market_id)
+        if last_ts is not None:
+            cutoff = int(np.searchsorted(dense_dts, last_ts, side="right"))
+            if 0 < cutoff < n_bars:
+                qty[cutoff:] = 0.0
+            continue
+
+        change_idx = np.flatnonzero(np.abs(pos_changes[market_id]) > 1e-12)
+        if change_idx.size:
+            last_idx = int(change_idx.max())
+            if last_idx < n_bars - 1:
+                qty[last_idx + 1 :] = 0.0
+
+
+def _mark_to_market(
+    pos_qty: Mapping[str, np.ndarray],
+    price_on_bar: Mapping[str, np.ndarray],
+) -> tuple[np.ndarray, np.ndarray]:
+    if not pos_qty:
+        return np.array([], dtype=float), np.array([], dtype=int)
+
+    n_bars = len(next(iter(pos_qty.values())))
+    total_pos_value = np.zeros(n_bars, dtype=float)
+    num_positions = np.zeros(n_bars, dtype=int)
+
+    for market_id, qty in pos_qty.items():
+        prices = np.nan_to_num(price_on_bar.get(market_id, np.zeros(n_bars, dtype=float)), nan=0.0)
+        values = np.where(qty >= 0.0, qty * prices, np.abs(qty) * (1.0 - prices))
+        values = np.maximum(values, 0.0)
+        total_pos_value += values
+        num_positions += (np.abs(qty) > 1e-12).astype(int)
+
+    return total_pos_value, num_positions
+
+
+def _build_dense_portfolio_snapshots(
+    models_module: Any,
+    sparse_snapshots: list[Any],
+    fills: list[Any],
+    market_prices: Mapping[str, Sequence[tuple[datetime, float]]],
+    initial_cash: float,
+) -> list[Any]:
+    """
+    Build a dense mark-to-market equity curve on market-price timestamps.
+
+    Sparse account snapshots are usually emitted only when account state changes
+    (typically around fills). This reconstructs per-timestamp portfolio value
+    across market price updates so charts include movement between trades.
+    """
+    if not sparse_snapshots or not market_prices:
+        return sparse_snapshots
+
+    dense_dt = _build_dense_timeline(fills, market_prices)
+    if len(dense_dt) == 0 or len(dense_dt) <= len(sparse_snapshots):
+        return sparse_snapshots
+
+    dense_dts = dense_dt.to_numpy(dtype="datetime64[ns]")
+    n_bars = len(dense_dt)
+    cash_series = _dense_cash_series(sparse_snapshots, dense_dt, initial_cash=initial_cash)
+    pos_changes, fill_price_map = _replay_fill_position_deltas(fills, dense_dts)
+
+    if not pos_changes:
+        # No open positions; keep dense cash-only timeline.
+        return [
+            models_module.PortfolioSnapshot(
+                timestamp=ts.to_pydatetime(),
+                cash=float(cash_series[i]),
+                total_equity=float(cash_series[i]),
+                unrealized_pnl=0.0,
+                num_positions=0,
+            )
+            for i, ts in enumerate(dense_dt)
+        ]
+
+    pos_qty = {mid: np.cumsum(delta) for mid, delta in pos_changes.items()}
+    price_on_bar: dict[str, np.ndarray] = {}
+    market_last_ts: dict[str, np.datetime64 | None] = {}
+    for market_id in pos_qty:
+        prices, last_ts = _aligned_market_prices(
+            market_id=market_id,
+            market_prices=market_prices,
+            dense_dts=dense_dts,
+            n_bars=n_bars,
+            fallback_price=fill_price_map.get(market_id, 0.5),
+        )
+        price_on_bar[market_id] = prices
+        market_last_ts[market_id] = last_ts
+
+    _apply_resolution_cutoffs(pos_qty, pos_changes, market_last_ts, dense_dts)
+    total_pos_value, num_positions = _mark_to_market(pos_qty, price_on_bar)
+
+    total_equity = cash_series + total_pos_value
+    return [
+        models_module.PortfolioSnapshot(
+            timestamp=ts.to_pydatetime(),
+            cash=float(cash_series[i]),
+            total_equity=float(total_equity[i]),
+            unrealized_pnl=float(total_pos_value[i]),
+            num_positions=int(num_positions[i]),
+        )
+        for i, ts in enumerate(dense_dt)
+    ]
+
+
 def _build_market_pnls(positions_report: pd.DataFrame) -> dict[str, float]:
     if positions_report is None or positions_report.empty:
         return {}
@@ -1121,13 +1317,20 @@ def create_legacy_backtest_chart(
     fills_report = engine.trader.generate_order_fills_report()
 
     fills = _convert_fills(fills_report, models_module)
-    snapshots = _build_portfolio_snapshots(models_module, account_report, fills)
-    if not snapshots:
-        raise ValueError("No portfolio snapshots were built from the account report.")
-
+    sparse_snapshots = _build_portfolio_snapshots(models_module, account_report, fills)
     normalized_market_prices = _normalize_market_prices(market_prices)
     if not normalized_market_prices:
         normalized_market_prices = _market_prices_from_fills(fills)
+
+    snapshots = _build_dense_portfolio_snapshots(
+        models_module=models_module,
+        sparse_snapshots=sparse_snapshots,
+        fills=fills,
+        market_prices=normalized_market_prices,
+        initial_cash=float(initial_cash),
+    )
+    if not snapshots:
+        raise ValueError("No portfolio snapshots were built from the account report.")
 
     metrics = _build_metrics(snapshots, initial_cash)
 
