@@ -791,40 +791,13 @@ def _build_daily_performance(
     )
 
 
-def _set_single_hover_tool(target: Any, bars: Any, tooltips: list[tuple[str, str]]) -> None:
-    try:
-        from bokeh.models import HoverTool
-    except ImportError:
-        return
-
-    hover_tools = [tool for tool in target.tools if isinstance(tool, HoverTool)]
-    if hover_tools:
-        primary = hover_tools[0]
-        primary.renderers = [bars]
-        primary.formatters = {"@datetime": "datetime"}
-        primary.tooltips = tooltips
-        primary.mode = "mouse"
-        for extra in hover_tools[1:]:
-            extra.renderers = []
-            extra.tooltips = []
-        return
-
-    target.add_tools(
-        HoverTool(
-            renderers=[bars],
-            formatters={"@datetime": "datetime"},
-            tooltips=tooltips,
-            mode="mouse",
-        ),
-    )
-
-
 def _rebuild_daily_pnl_panel(layout: Any, daily: pd.DataFrame) -> None:
     if daily.empty:
         return
 
     try:
         from bokeh.models import ColumnDataSource
+        from bokeh.models import HoverTool
         from bokeh.models import NumeralTickFormatter
     except ImportError:
         return
@@ -843,14 +816,12 @@ def _rebuild_daily_pnl_panel(layout: Any, daily: pd.DataFrame) -> None:
     diffs = pd.Series(x_vals).sort_values().diff().dropna()
     width = max(1.0, float(diffs.median()) * 0.8) if not diffs.empty else 1.0
 
-    pnl_values = daily["pnl"].to_numpy(dtype=float)
     source = ColumnDataSource(
         {
             "x": x_vals,
-            "pnl": pnl_values,
-            "top": np.maximum(pnl_values, 0.0),
-            "bottom": np.minimum(pnl_values, 0.0),
-            "color": np.where(pnl_values >= 0.0, "#2ecc71", "#e74c3c"),
+            "pnl": daily["pnl"].to_numpy(dtype=float),
+            "pnl_pos": np.maximum(daily["pnl"].to_numpy(dtype=float), 0.0),
+            "pnl_neg": np.minimum(daily["pnl"].to_numpy(dtype=float), 0.0),
             "datetime": pd.to_datetime(daily["datetime"]).to_numpy(dtype="datetime64[ns]"),
         },
     )
@@ -858,25 +829,37 @@ def _rebuild_daily_pnl_panel(layout: Any, daily: pd.DataFrame) -> None:
     if target.yaxis:
         target.yaxis[0].axis_label = "P&L (Daily)"
     target.renderers = [r for r in target.renderers if not hasattr(r, "data_source")]
+    target.tools = [tool for tool in target.tools if tool.__class__.__name__ != "HoverTool"]
 
-    bars = target.vbar(
+    pos = target.vbar(
         x="x",
-        top="top",
-        bottom="bottom",
+        top="pnl_pos",
         source=source,
         width=width,
-        color="color",
+        color="#2ecc71",
         alpha=0.75,
-        legend_label="Daily P&L",
+        legend_label="Gain",
+    )
+    neg = target.vbar(
+        x="x",
+        top="pnl_neg",
+        source=source,
+        width=width,
+        color="#e74c3c",
+        alpha=0.75,
+        legend_label="Loss",
     )
 
-    _set_single_hover_tool(
-        target,
-        bars,
-        [
-            ("Date", "@datetime{%F}"),
-            ("P&L", "@pnl{$0,0.00}"),
-        ],
+    target.add_tools(
+        HoverTool(
+            renderers=[pos, neg],
+            formatters={"@datetime": "datetime"},
+            tooltips=[
+                ("Date", "@datetime{%F}"),
+                ("P&L", "@pnl{$0,0.00}"),
+            ],
+            mode="vline",
+        ),
     )
     target.yaxis.formatter = NumeralTickFormatter(format="$ 0,0")
 
@@ -887,225 +870,94 @@ def _replace_monthly_with_daily_returns(layout: Any, daily: pd.DataFrame) -> Any
 
     try:
         from bokeh.models import ColumnDataSource
+        from bokeh.models import HoverTool
         from bokeh.models import NumeralTickFormatter
+        from bokeh.models import Span
+        from bokeh.plotting import figure
     except ImportError:
         return layout
 
-    target = None
-    for fig in _iter_figures(layout):
-        labels = [axis.axis_label for axis in getattr(fig, "yaxis", [])]
-        if any(label == "Monthly Returns" for label in labels):
-            target = fig
-            break
+    target_index: int | None = None
+    for idx, child in enumerate(layout.children):
+        if hasattr(child, "yaxis"):
+            labels = [axis.axis_label for axis in getattr(child, "yaxis", [])]
+            if any(label == "Monthly Returns" for label in labels):
+                target_index = idx
+                break
 
-    if target is None:
+    if target_index is None:
         return layout
 
-    ret_values = daily["ret"].to_numpy(dtype=float)
     source = ColumnDataSource(
         {
             "datetime": pd.to_datetime(daily["datetime"]).to_numpy(dtype="datetime64[ns]"),
-            "ret": ret_values,
-            "top": np.maximum(ret_values, 0.0),
-            "bottom": np.minimum(ret_values, 0.0),
-            "color": np.where(ret_values >= 0.0, "#2ecc71", "#e74c3c"),
+            "ret": daily["ret"].to_numpy(dtype=float),
+            "ret_pos": np.maximum(daily["ret"].to_numpy(dtype=float), 0.0),
+            "ret_neg": np.minimum(daily["ret"].to_numpy(dtype=float), 0.0),
         },
     )
 
+    fig = figure(
+        title="Daily Returns (%)",
+        x_axis_type="datetime",
+        height=130,
+        tools="xpan,xwheel_zoom,box_zoom,undo,redo,reset,save",
+        active_drag="xpan",
+        active_scroll="xwheel_zoom",
+        sizing_mode="stretch_width",
+        toolbar_location="right",
+    )
+    fig.add_layout(
+        Span(
+            location=0.0,
+            dimension="width",
+            line_color="#666666",
+            line_dash="dashed",
+            line_width=1,
+        ),
+    )
+
     day_ms = 24 * 60 * 60 * 1000
-    target.renderers = [r for r in target.renderers if not hasattr(r, "data_source")]
-    bars = target.vbar(
+    pos = fig.vbar(
         x="datetime",
-        top="top",
-        bottom="bottom",
+        top="ret_pos",
         source=source,
         width=day_ms * 0.8,
-        color="color",
+        color="#2ecc71",
         alpha=0.75,
-        legend_label="Daily Return",
+        legend_label="Positive",
+    )
+    neg = fig.vbar(
+        x="datetime",
+        top="ret_neg",
+        source=source,
+        width=day_ms * 0.8,
+        color="#e74c3c",
+        alpha=0.75,
+        legend_label="Negative",
     )
 
-    _set_single_hover_tool(
-        target,
-        bars,
-        [
-            ("Date", "@datetime{%F}"),
-            ("Return", "@ret{+0.00%}"),
-        ],
+    fig.add_tools(
+        HoverTool(
+            renderers=[pos, neg],
+            formatters={"@datetime": "datetime"},
+            tooltips=[
+                ("Date", "@datetime{%F}"),
+                ("Return", "@ret{+0.00%}"),
+            ],
+            mode="vline",
+        ),
     )
 
-    if getattr(target, "title", None) is not None:
-        target.title.text = "Daily Returns (%)"
-    if target.yaxis:
-        target.yaxis[0].axis_label = "Daily Return"
-    target.yaxis.formatter = NumeralTickFormatter(format="+0.0%")
-    if getattr(target, "legend", None):
-        target.legend.location = "top_left"
-        target.legend.click_policy = "hide"
+    fig.yaxis.axis_label = "Daily Return"
+    fig.yaxis.formatter = NumeralTickFormatter(format="+0.0%")
+    fig.legend.location = "top_left"
+    fig.legend.click_policy = "hide"
+
+    children = list(layout.children)
+    children[target_index] = fig
+    layout.children = children
     return layout
-
-
-def _find_yes_price_figure(layout: Any) -> Any | None:
-    for fig in _iter_figures(layout):
-        labels = [str(axis.axis_label or "") for axis in getattr(fig, "yaxis", [])]
-        if any(label == "YES Price" for label in labels):
-            return fig
-    return None
-
-
-def _extract_fill_dataframe_from_figure(fig: Any) -> pd.DataFrame:
-    for renderer in getattr(fig, "renderers", []):
-        source = getattr(renderer, "data_source", None)
-        data = getattr(source, "data", None)
-        if not isinstance(data, dict):
-            continue
-
-        required = {"index", "price", "market_id", "action", "side", "quantity"}
-        if not required.issubset(set(data.keys())):
-            continue
-
-        return pd.DataFrame(
-            {
-                "index": pd.to_numeric(pd.Series(data["index"]), errors="coerce"),
-                "price": pd.to_numeric(pd.Series(data["price"]), errors="coerce"),
-                "market_id": pd.Series(data["market_id"]).astype(str),
-                "action": pd.Series(data["action"]).astype(str).str.lower(),
-                "side": pd.Series(data["side"]).astype(str).str.lower(),
-                "quantity": pd.to_numeric(pd.Series(data["quantity"]), errors="coerce"),
-            },
-        ).dropna()
-
-    return pd.DataFrame()
-
-
-def _segment_market_fills(
-    market_fills: pd.DataFrame,
-) -> tuple[list[list[float]], list[list[float]], list[list[float]], list[list[float]]]:
-    xs_profitable: list[list[float]] = []
-    ys_profitable: list[list[float]] = []
-    xs_losing: list[list[float]] = []
-    ys_losing: list[list[float]] = []
-
-    qty = 0.0
-    start_index: float | None = None
-    start_price: float | None = None
-    start_sign = 0.0
-
-    for row in market_fills.itertuples(index=False):
-        delta = _signed_quantity(str(row.action), str(row.side), float(row.quantity))
-        if delta == 0.0:
-            continue
-
-        prev_qty = qty
-        qty += delta
-        bar = float(row.index)
-        price = float(row.price)
-
-        if abs(prev_qty) < 1e-12 and abs(qty) >= 1e-12:
-            start_index = bar
-            start_price = price
-            start_sign = 1.0 if qty > 0 else -1.0
-            continue
-
-        if prev_qty * qty < 0 and start_index is not None and start_price is not None:
-            cycle_pnl = (1.0 if prev_qty > 0 else -1.0) * (price - start_price)
-            if cycle_pnl >= 0:
-                xs_profitable.append([start_index, bar])
-                ys_profitable.append([start_price, price])
-            else:
-                xs_losing.append([start_index, bar])
-                ys_losing.append([start_price, price])
-
-            start_index = bar
-            start_price = price
-            start_sign = 1.0 if qty > 0 else -1.0
-            continue
-
-        if abs(qty) < 1e-12 and start_index is not None and start_price is not None:
-            cycle_pnl = start_sign * (price - start_price)
-            if cycle_pnl >= 0:
-                xs_profitable.append([start_index, bar])
-                ys_profitable.append([start_price, price])
-            else:
-                xs_losing.append([start_index, bar])
-                ys_losing.append([start_price, price])
-            start_index = None
-            start_price = None
-            start_sign = 0.0
-
-    return xs_profitable, ys_profitable, xs_losing, ys_losing
-
-
-def _remove_existing_connectors(fig: Any) -> None:
-    keep_renderers = []
-    for renderer in getattr(fig, "renderers", []):
-        glyph = getattr(renderer, "glyph", None)
-        glyph_name = glyph.__class__.__name__ if glyph is not None else ""
-        if glyph_name == "MultiLine":
-            continue
-        keep_renderers.append(renderer)
-    fig.renderers = keep_renderers
-
-    for legend in getattr(fig, "legend", []):
-        filtered_items = []
-        for item in list(getattr(legend, "items", [])):
-            label = getattr(item, "label", None)
-            if isinstance(label, dict):
-                text = str(label.get("value", ""))
-            else:
-                text = str(label)
-            lower = text.lower()
-            if "profitable" in lower or "losing" in lower:
-                continue
-            filtered_items.append(item)
-        legend.items = filtered_items
-
-
-def _rebuild_trade_connectors(layout: Any) -> None:
-    """Replace path-following connector lines with entry-to-exit segments."""
-    yes_fig = _find_yes_price_figure(layout)
-    if yes_fig is None:
-        return
-
-    fills = _extract_fill_dataframe_from_figure(yes_fig)
-    if fills.empty:
-        return
-
-    xs_profitable: list[list[float]] = []
-    ys_profitable: list[list[float]] = []
-    xs_losing: list[list[float]] = []
-    ys_losing: list[list[float]] = []
-
-    grouped = fills.sort_values(["market_id", "index"]).groupby("market_id")
-    for _, market_fills in grouped:
-        xs_p, ys_p, xs_l, ys_l = _segment_market_fills(market_fills)
-        xs_profitable.extend(xs_p)
-        ys_profitable.extend(ys_p)
-        xs_losing.extend(xs_l)
-        ys_losing.extend(ys_l)
-
-    _remove_existing_connectors(yes_fig)
-
-    if xs_profitable:
-        yes_fig.multi_line(
-            xs=xs_profitable,
-            ys=ys_profitable,
-            line_color="#178f4e",
-            line_width=3,
-            line_alpha=0.85,
-            line_dash="dotted",
-            legend_label=f"Profitable ({len(xs_profitable)})",
-        )
-    if xs_losing:
-        yes_fig.multi_line(
-            xs=xs_losing,
-            ys=ys_losing,
-            line_color="#bf3a2b",
-            line_width=3,
-            line_alpha=0.85,
-            line_dash="dotted",
-            legend_label=f"Losing ({len(xs_losing)})",
-        )
 
 
 def _focus_allocation_panel(layout: Any) -> None:
@@ -1148,7 +1000,6 @@ def _focus_allocation_panel(layout: Any) -> None:
 def _apply_layout_overrides(layout: Any, initial_cash: float) -> Any:
     layout = _remove_data_banner(layout)
     _focus_allocation_panel(layout)
-    _rebuild_trade_connectors(layout)
 
     equity_timeline = _extract_equity_timeline(layout)
     daily = _build_daily_performance(equity_timeline, initial_cash=initial_cash)
