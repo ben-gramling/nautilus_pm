@@ -21,20 +21,11 @@ from decimal import Decimal
 import msgspec
 import pandas as pd
 
-from nautilus_trader.adapters.kalshi.fee_model import (
-    KalshiProportionalFeeModel,
-)
-from nautilus_trader.adapters.kalshi.loaders import (
-    KalshiDataLoader,
-)
-from nautilus_trader.adapters.kalshi.providers import (
-    KALSHI_REST_BASE,
-)
-from nautilus_trader.adapters.kalshi.providers import (
-    market_dict_to_instrument,
-)
-from nautilus_trader.analysis.config import TearsheetConfig
-from nautilus_trader.analysis.tearsheet import create_tearsheet
+from nautilus_trader.adapters.kalshi.fee_model import KalshiProportionalFeeModel
+from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader
+from nautilus_trader.adapters.kalshi.providers import KALSHI_REST_BASE
+from nautilus_trader.adapters.kalshi.providers import market_dict_to_instrument
+from nautilus_trader.analysis.legacy_plot_adapter import create_legacy_backtest_chart
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.config import LoggingConfig
@@ -75,7 +66,7 @@ ENTRY_THRESHOLD = 0.01  # enter when close is 1¢ below rolling average (0–1 s
 TAKE_PROFIT = 0.01  # exit when price recovers 1¢ above fill price
 STOP_LOSS = 0.03  # stop out 3¢ below fill price
 TRADE_SIZE = Decimal(1)
-INITIAL_CASH = 10_000.0
+INITIAL_CASH = 1_000.0
 MAX_RETRIES = 4  # retry 429s up to this many times
 RETRY_BASE_DELAY = 2.0  # seconds; doubles on each retry
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,6 +144,12 @@ class BarMeanReversion(Strategy):
     def on_stop(self) -> None:
         self.cancel_all_orders(self.config.instrument_id)
         self.close_all_positions(self.config.instrument_id)
+
+    def on_reset(self) -> None:
+        self._prices.clear()
+        self._entry_price = None
+        self._pending = False
+        self._instrument = None
 
     def _buy(self) -> None:
         assert self._instrument is not None
@@ -375,6 +372,106 @@ def _extract_pnl(pos_report: pd.DataFrame) -> float:
     return total
 
 
+def _build_brier_inputs_from_bars(
+    bars: list[Bar],
+    window: int,
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """
+    Build user/market/outcome series for cumulative Brier advantage.
+
+    For active (unresolved) markets, this uses a terminal-price proxy outcome:
+    outcome = 1 if final observed close >= 0.5 else 0.
+    """
+    empty = pd.Series(dtype=float)
+    if not bars or window <= 0:
+        return empty, empty, empty
+
+    timestamps: list[pd.Timestamp] = []
+    prices: list[float] = []
+    for bar in bars:
+        ts_ns = getattr(bar, "ts_event", None) or getattr(bar, "ts_init", None)
+        if ts_ns is None:
+            continue
+        try:
+            ts = pd.to_datetime(int(ts_ns), unit="ns", utc=True)
+            price = float(bar.close)
+        except (TypeError, ValueError):
+            continue
+        timestamps.append(ts)
+        prices.append(price)
+
+    if not timestamps:
+        return empty, empty, empty
+
+    frame = pd.DataFrame(
+        {
+            "ts": timestamps,
+            "market_probability": prices,
+        }
+    )
+    frame = (
+        frame.dropna()
+        .sort_values("ts")
+        .drop_duplicates(subset=["ts"], keep="last")
+        .set_index("ts")
+    )
+    if frame.empty:
+        return empty, empty, empty
+
+    frame["market_probability"] = frame["market_probability"].clip(0.0, 1.0)
+    frame["user_probability"] = (
+        frame["market_probability"]
+        .rolling(window=window, min_periods=window)
+        .mean()
+        .clip(0.0, 1.0)
+    )
+    frame["outcome"] = float(frame["market_probability"].iloc[-1] >= 0.5)
+
+    frame = frame.dropna(subset=["user_probability", "market_probability", "outcome"])
+    if frame.empty:
+        return empty, empty, empty
+
+    return (
+        frame["user_probability"].copy(),
+        frame["market_probability"].copy(),
+        frame["outcome"].copy(),
+    )
+
+
+def _to_naive_utc(value: object) -> datetime | None:
+    ts = pd.to_datetime(value, unit="ns", utc=True, errors="coerce")
+    if pd.isna(ts):
+        return None
+    if isinstance(ts, pd.DatetimeIndex):
+        if len(ts) == 0:
+            return None
+        ts = ts[0]
+    assert isinstance(ts, pd.Timestamp)
+    return ts.tz_convert("UTC").tz_localize(None).to_pydatetime()
+
+
+def _build_market_prices_from_bars(bars: list[Bar]) -> list[tuple[datetime, float]]:
+    """
+    Convert bars to `(timestamp, close_price)` points for legacy plotting.
+    """
+    points: list[tuple[datetime, float]] = []
+    for bar in bars:
+        ts_ns = getattr(bar, "ts_event", None) or getattr(bar, "ts_init", None)
+        if ts_ns is None:
+            continue
+        ts = _to_naive_utc(ts_ns)
+        if ts is None:
+            continue
+        points.append((ts, float(bar.close)))
+
+    if not points:
+        return []
+
+    frame = pd.DataFrame(points, columns=["ts", "price"]).sort_values("ts")
+    frame = frame.drop_duplicates(subset=["ts"], keep="last")
+    return [(row.ts.to_pydatetime(), float(row.price)) for row in frame.itertuples(index=False)]
+
+
 def _run_backtest(ticker: str, loader: KalshiDataLoader, bars: list[Bar]) -> dict:
     """Run one market's backtest and return a results dict."""
     instrument = loader.instrument
@@ -383,7 +480,7 @@ def _run_backtest(ticker: str, loader: KalshiDataLoader, bars: list[Bar]) -> dic
     engine = BacktestEngine(
         config=BacktestEngineConfig(
             trader_id=TraderId("BACKTESTER-001"),
-            logging=LoggingConfig(log_level="INFO"),
+            logging=LoggingConfig(log_level="WARNING"),
             risk_engine=RiskEngineConfig(bypass=True),
         )
     )
@@ -415,11 +512,24 @@ def _run_backtest(ticker: str, loader: KalshiDataLoader, bars: list[Bar]) -> dic
     fills = engine.trader.generate_order_fills_report()
     positions = engine.trader.generate_positions_report()
     pnl = _extract_pnl(positions)
+    user_probabilities, market_probabilities, outcomes = _build_brier_inputs_from_bars(
+        bars=bars,
+        window=WINDOW,
+    )
 
-    tearsheet_path = f"output/{NAME}_{ticker}_tearsheet.html"
+    chart_path = f"output/{NAME}_{ticker}_legacy.html"
     os.makedirs("output", exist_ok=True)
-    create_tearsheet(
-        engine, tearsheet_path, config=TearsheetConfig(theme="nautilus_dark")
+    create_legacy_backtest_chart(
+        engine=engine,
+        output_path=chart_path,
+        strategy_name=f"{NAME}:{ticker}",
+        platform="kalshi",
+        initial_cash=INITIAL_CASH,
+        market_prices={str(instrument.id): _build_market_prices_from_bars(bars)},
+        user_probabilities=user_probabilities,
+        market_probabilities=market_probabilities,
+        outcomes=outcomes,
+        open_browser=False,
     )
 
     engine.reset()
@@ -484,4 +594,8 @@ async def run() -> None:
         results.append(result)
 
     _print_summary(results)
-    print(f"\nTearsheets saved to output/{NAME}_<ticker>_tearsheet.html")
+    print(f"\nLegacy charts saved to output/{NAME}_<ticker>_legacy.html")
+
+
+if __name__ == "__main__":
+    asyncio.run(run())
