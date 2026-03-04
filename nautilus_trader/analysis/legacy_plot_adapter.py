@@ -34,6 +34,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from nautilus_trader.analysis.reporter import ReportProvider
@@ -41,6 +42,7 @@ from nautilus_trader.analysis.reporter import ReportProvider
 
 DEFAULT_LEGACY_CLONE = "https://github.com/evan-kolberg/prediction-market-backtesting.git"
 DEFAULT_LEGACY_WORKTREE = Path("/tmp/prediction-market-backtesting-legacy")  # noqa: S108
+GIT_BIN = shutil.which("git") or "git"
 
 
 def _parse_float(value: Any, default: float = 0.0) -> float:
@@ -193,8 +195,8 @@ def _git_has_legacy_branch(repo_path: Path) -> bool:
         return False
 
     try:
-        proc = subprocess.run(  # noqa: S603,S607
-            ["git", "-C", str(repo_path), "rev-parse", "--verify", "legacy"],
+        proc = subprocess.run(  # noqa: S603
+            [GIT_BIN, "-C", str(repo_path), "rev-parse", "--verify", "legacy"],
             check=False,
             capture_output=True,
             text=True,
@@ -215,9 +217,9 @@ def _prepare_legacy_worktree(repo_path: Path) -> Path | None:
         shutil.rmtree(DEFAULT_LEGACY_WORKTREE, ignore_errors=True)
 
     try:
-        subprocess.run(  # noqa: S603,S607
+        subprocess.run(  # noqa: S603
             [
-                "git",
+                GIT_BIN,
                 "-C",
                 str(repo_path),
                 "worktree",
@@ -234,9 +236,9 @@ def _prepare_legacy_worktree(repo_path: Path) -> Path | None:
     except subprocess.CalledProcessError:
         # Worktree might already exist but in a stale state.
         try:
-            subprocess.run(  # noqa: S603,S607
+            subprocess.run(  # noqa: S603
                 [
-                    "git",
+                    GIT_BIN,
                     "-C",
                     str(repo_path),
                     "worktree",
@@ -249,9 +251,9 @@ def _prepare_legacy_worktree(repo_path: Path) -> Path | None:
                 text=True,
             )
             shutil.rmtree(DEFAULT_LEGACY_WORKTREE, ignore_errors=True)
-            subprocess.run(  # noqa: S603,S607
+            subprocess.run(  # noqa: S603
                 [
-                    "git",
+                    GIT_BIN,
                     "-C",
                     str(repo_path),
                     "worktree",
@@ -279,9 +281,9 @@ def _clone_legacy_repo(target_path: Path) -> Path | None:
         shutil.rmtree(target_path, ignore_errors=True)
 
     try:
-        subprocess.run(  # noqa: S603,S607
+        subprocess.run(  # noqa: S603
             [
-                "git",
+                GIT_BIN,
                 "clone",
                 "--depth",
                 "1",
@@ -670,6 +672,343 @@ def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
     return column(layout, fig, sizing_mode="stretch_width")
 
 
+def _iter_layout_nodes(node: Any):
+    yield node
+    children = getattr(node, "children", None)
+    if children is None:
+        return
+
+    for child in children:
+        obj = child[0] if isinstance(child, tuple) else child
+        if obj is not None:
+            yield from _iter_layout_nodes(obj)
+
+
+def _iter_figures(layout: Any):
+    for node in _iter_layout_nodes(layout):
+        if hasattr(node, "renderers") and hasattr(node, "title") and hasattr(node, "yaxis"):
+            yield node
+
+
+def _remove_data_banner(layout: Any) -> Any:
+    if not hasattr(layout, "children") or not layout.children:
+        return layout
+
+    first = layout.children[0]
+    text = getattr(first, "text", "")
+    if isinstance(text, str) and "<b>Data:</b>" in text:
+        layout.children = list(layout.children[1:])
+    return layout
+
+
+def _extract_equity_timeline(layout: Any) -> pd.DataFrame:
+    candidates: list[pd.DataFrame] = []
+
+    for fig in _iter_figures(layout):
+        for renderer in getattr(fig, "renderers", []):
+            source = getattr(renderer, "data_source", None)
+            data = getattr(source, "data", None)
+            if not isinstance(data, dict):
+                continue
+            if "datetime" not in data or "index" not in data:
+                continue
+
+            if "equity_dollar" in data:
+                equity_values = data["equity_dollar"]
+            elif "equity" in data:
+                equity_values = data["equity"]
+            elif "cash" in data and "pos_value" in data:
+                equity_values = np.asarray(data["cash"], dtype=float) + np.asarray(
+                    data["pos_value"],
+                    dtype=float,
+                )
+            else:
+                continue
+
+            frame = pd.DataFrame(
+                {
+                    "datetime": pd.to_datetime(data["datetime"], errors="coerce"),
+                    "index": pd.to_numeric(pd.Series(data["index"]), errors="coerce"),
+                    "equity": pd.to_numeric(pd.Series(equity_values), errors="coerce"),
+                },
+            ).dropna()
+
+            if frame.empty:
+                continue
+
+            frame = frame.sort_values("datetime").drop_duplicates(subset=["datetime"], keep="last")
+            candidates.append(frame)
+
+    if not candidates:
+        return pd.DataFrame(columns=["datetime", "index", "equity"])
+
+    return max(candidates, key=len)
+
+
+def _build_daily_performance(
+    equity_timeline: pd.DataFrame,
+    initial_cash: float,
+) -> pd.DataFrame:
+    if equity_timeline.empty:
+        return pd.DataFrame()
+
+    series = (
+        equity_timeline.set_index("datetime")["equity"]
+        .sort_index()
+        .astype(float)
+    )
+    daily_close = series.resample("1D").last().dropna()
+    if daily_close.empty:
+        return pd.DataFrame()
+
+    daily_pnl = daily_close.diff()
+    if len(daily_close) > 0:
+        daily_pnl.iloc[0] = float(daily_close.iloc[0]) - float(initial_cash)
+
+    daily_returns = daily_close.pct_change()
+    if len(daily_close) > 0 and initial_cash:
+        daily_returns.iloc[0] = (float(daily_close.iloc[0]) - float(initial_cash)) / float(
+            initial_cash,
+        )
+    daily_returns = daily_returns.fillna(0.0)
+
+    lookup = equity_timeline[["datetime", "index"]].sort_values("datetime")
+    aligned = pd.merge_asof(
+        pd.DataFrame({"datetime": daily_close.index}).sort_values("datetime"),
+        lookup,
+        on="datetime",
+        direction="backward",
+    )
+    aligned["index"] = aligned["index"].ffill().bfill().fillna(0.0)
+
+    return pd.DataFrame(
+        {
+            "datetime": daily_close.index.to_pydatetime(),
+            "x": aligned["index"].to_numpy(dtype=float),
+            "pnl": daily_pnl.to_numpy(dtype=float),
+            "ret": daily_returns.to_numpy(dtype=float),
+        },
+    )
+
+
+def _rebuild_daily_pnl_panel(layout: Any, daily: pd.DataFrame) -> None:
+    if daily.empty:
+        return
+
+    try:
+        from bokeh.models import ColumnDataSource
+        from bokeh.models import HoverTool
+        from bokeh.models import NumeralTickFormatter
+    except ImportError:
+        return
+
+    target = None
+    for fig in _iter_figures(layout):
+        labels = [str(axis.axis_label or "") for axis in getattr(fig, "yaxis", [])]
+        if any("periodic" in label.lower() for label in labels):
+            target = fig
+            break
+
+    if target is None:
+        return
+
+    x_vals = daily["x"].to_numpy(dtype=float)
+    diffs = pd.Series(x_vals).sort_values().diff().dropna()
+    width = max(1.0, float(diffs.median()) * 0.8) if not diffs.empty else 1.0
+
+    source = ColumnDataSource(
+        {
+            "x": x_vals,
+            "pnl": daily["pnl"].to_numpy(dtype=float),
+            "pnl_pos": np.maximum(daily["pnl"].to_numpy(dtype=float), 0.0),
+            "pnl_neg": np.minimum(daily["pnl"].to_numpy(dtype=float), 0.0),
+            "datetime": pd.to_datetime(daily["datetime"]).to_numpy(dtype="datetime64[ns]"),
+        },
+    )
+
+    if target.yaxis:
+        target.yaxis[0].axis_label = "P&L (Daily)"
+    target.renderers = [r for r in target.renderers if not hasattr(r, "data_source")]
+    target.tools = [tool for tool in target.tools if tool.__class__.__name__ != "HoverTool"]
+
+    pos = target.vbar(
+        x="x",
+        top="pnl_pos",
+        source=source,
+        width=width,
+        color="#2ecc71",
+        alpha=0.75,
+        legend_label="Gain",
+    )
+    neg = target.vbar(
+        x="x",
+        top="pnl_neg",
+        source=source,
+        width=width,
+        color="#e74c3c",
+        alpha=0.75,
+        legend_label="Loss",
+    )
+
+    target.add_tools(
+        HoverTool(
+            renderers=[pos, neg],
+            formatters={"@datetime": "datetime"},
+            tooltips=[
+                ("Date", "@datetime{%F}"),
+                ("P&L", "@pnl{$0,0.00}"),
+            ],
+            mode="vline",
+        ),
+    )
+    target.yaxis.formatter = NumeralTickFormatter(format="$ 0,0")
+
+
+def _replace_monthly_with_daily_returns(layout: Any, daily: pd.DataFrame) -> Any:
+    if daily.empty or not hasattr(layout, "children"):
+        return layout
+
+    try:
+        from bokeh.models import ColumnDataSource
+        from bokeh.models import HoverTool
+        from bokeh.models import NumeralTickFormatter
+        from bokeh.models import Span
+        from bokeh.plotting import figure
+    except ImportError:
+        return layout
+
+    target_index: int | None = None
+    for idx, child in enumerate(layout.children):
+        if hasattr(child, "yaxis"):
+            labels = [axis.axis_label for axis in getattr(child, "yaxis", [])]
+            if any(label == "Monthly Returns" for label in labels):
+                target_index = idx
+                break
+
+    if target_index is None:
+        return layout
+
+    source = ColumnDataSource(
+        {
+            "datetime": pd.to_datetime(daily["datetime"]).to_numpy(dtype="datetime64[ns]"),
+            "ret": daily["ret"].to_numpy(dtype=float),
+            "ret_pos": np.maximum(daily["ret"].to_numpy(dtype=float), 0.0),
+            "ret_neg": np.minimum(daily["ret"].to_numpy(dtype=float), 0.0),
+        },
+    )
+
+    fig = figure(
+        title="Daily Returns (%)",
+        x_axis_type="datetime",
+        height=130,
+        tools="xpan,xwheel_zoom,box_zoom,undo,redo,reset,save",
+        active_drag="xpan",
+        active_scroll="xwheel_zoom",
+        sizing_mode="stretch_width",
+        toolbar_location="right",
+    )
+    fig.add_layout(
+        Span(
+            location=0.0,
+            dimension="width",
+            line_color="#666666",
+            line_dash="dashed",
+            line_width=1,
+        ),
+    )
+
+    day_ms = 24 * 60 * 60 * 1000
+    pos = fig.vbar(
+        x="datetime",
+        top="ret_pos",
+        source=source,
+        width=day_ms * 0.8,
+        color="#2ecc71",
+        alpha=0.75,
+        legend_label="Positive",
+    )
+    neg = fig.vbar(
+        x="datetime",
+        top="ret_neg",
+        source=source,
+        width=day_ms * 0.8,
+        color="#e74c3c",
+        alpha=0.75,
+        legend_label="Negative",
+    )
+
+    fig.add_tools(
+        HoverTool(
+            renderers=[pos, neg],
+            formatters={"@datetime": "datetime"},
+            tooltips=[
+                ("Date", "@datetime{%F}"),
+                ("Return", "@ret{+0.00%}"),
+            ],
+            mode="vline",
+        ),
+    )
+
+    fig.yaxis.axis_label = "Daily Return"
+    fig.yaxis.formatter = NumeralTickFormatter(format="+0.0%")
+    fig.legend.location = "top_left"
+    fig.legend.click_policy = "hide"
+
+    children = list(layout.children)
+    children[target_index] = fig
+    layout.children = children
+    return layout
+
+
+def _focus_allocation_panel(layout: Any) -> None:
+    try:
+        from bokeh.models import Range1d
+    except ImportError:
+        return
+
+    for fig in _iter_figures(layout):
+        labels = [axis.axis_label for axis in getattr(fig, "yaxis", [])]
+        if "Allocation" not in labels:
+            continue
+
+        glyph_renderers = [r for r in fig.renderers if hasattr(r, "data_source")]
+        if not glyph_renderers:
+            continue
+
+        source = glyph_renderers[0].data_source
+        data = getattr(source, "data", {})
+        alloc_cols = [k for k in data if str(k).startswith("alloc_")]
+        non_cash = [k for k in alloc_cols if "Cash" not in str(k)]
+        if not non_cash:
+            continue
+
+        stacked = np.zeros(len(data[non_cash[0]]), dtype=float)
+        for col in non_cash:
+            stacked += np.nan_to_num(np.asarray(data[col], dtype=float))
+
+        peak = float(np.nanmax(stacked)) if len(stacked) else 0.0
+        upper = min(1.0, max(0.05, peak * 1.3))
+        fig.y_range = Range1d(0.0, upper)
+        fig.yaxis[0].axis_label = "Market Allocation (ex-cash)"
+
+        # Hide the grey cash stack so market allocation is visible.
+        if glyph_renderers:
+            glyph_renderers[-1].visible = False
+        break
+
+
+def _apply_layout_overrides(layout: Any, initial_cash: float) -> Any:
+    layout = _remove_data_banner(layout)
+    _focus_allocation_panel(layout)
+
+    equity_timeline = _extract_equity_timeline(layout)
+    daily = _build_daily_performance(equity_timeline, initial_cash=initial_cash)
+    _rebuild_daily_pnl_panel(layout, daily)
+    layout = _replace_monthly_with_daily_returns(layout, daily)
+
+    return layout
+
+
 def create_legacy_backtest_chart(
     engine: Any,
     output_path: str | Path,
@@ -698,7 +1037,6 @@ def create_legacy_backtest_chart(
 
     account_report = _extract_account_report(engine)
     fills_report = engine.trader.generate_order_fills_report()
-    positions_report = engine.trader.generate_positions_report()
 
     fills = _convert_fills(fills_report, models_module)
     snapshots = _build_portfolio_snapshots(models_module, account_report, fills)
@@ -709,7 +1047,6 @@ def create_legacy_backtest_chart(
     if not normalized_market_prices:
         normalized_market_prices = _market_prices_from_fills(fills)
 
-    market_pnls = _build_market_pnls(positions_report)
     metrics = _build_metrics(snapshots, initial_cash)
 
     result = models_module.BacktestResult(
@@ -725,7 +1062,9 @@ def create_legacy_backtest_chart(
         num_markets_traded=len({fill.market_id for fill in fills}),
         num_markets_resolved=0,
         market_prices=normalized_market_prices,
-        market_pnls=market_pnls,
+        # Leave this empty so the legacy P/L panel falls back to per-fill
+        # markers instead of one terminal point per market.
+        market_pnls={},
     )
 
     output_abs = Path(output_path).expanduser().resolve()
@@ -738,6 +1077,7 @@ def create_legacy_backtest_chart(
         open_browser=open_browser,
         progress=progress,
     )
+    layout = _apply_layout_overrides(layout, initial_cash=float(initial_cash))
 
     brier_frame = prepare_cumulative_brier_advantage(
         user_probabilities=user_probabilities,

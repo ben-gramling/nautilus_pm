@@ -96,7 +96,7 @@ def calculate_kalshi_commission(
     return decimal.Decimal(str(math.ceil(raw_fee * 100) / 100))
 
 
-def market_dict_to_instrument(market: dict) -> BinaryOption:
+def _market_dict_to_instrument(market: dict) -> BinaryOption:
     """Convert a Kalshi market dict to a NautilusTrader ``BinaryOption``."""
     ticker = market["ticker"]
     venue = Venue("KALSHI")
@@ -142,6 +142,10 @@ def market_dict_to_instrument(market: dict) -> BinaryOption:
         ts_event=0,
         ts_init=0,
     )
+
+
+# Public alias retained for loader/backtest imports.
+market_dict_to_instrument = _market_dict_to_instrument
 
 
 class _KalshiHttpClient:
@@ -263,4 +267,4 @@ class KalshiInstrumentProvider(InstrumentProvider):
 
     def _market_to_instrument(self, market: dict) -> BinaryOption:
         """Convert a Kalshi market dict to a NautilusTrader ``BinaryOption``."""
-        return market_dict_to_instrument(market)
+        return _market_dict_to_instrument(market)
