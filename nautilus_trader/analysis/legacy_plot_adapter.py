@@ -960,6 +960,87 @@ def _replace_monthly_with_daily_returns(layout: Any, daily: pd.DataFrame) -> Any
     return layout
 
 
+def _remove_periodic_pnl_panel(layout: Any) -> Any:
+    """
+    Remove the periodic/daily P&L panel.
+
+    Daily returns already capture day-over-day performance and this avoids
+    duplicated information.
+    """
+    keywords = ("periodic", "p&l (daily)")
+
+    for node in _iter_layout_nodes(layout):
+        children = getattr(node, "children", None)
+        if children is None:
+            continue
+
+        new_children: list[Any] = []
+        changed = False
+        for child in children:
+            obj = child[0] if isinstance(child, tuple) else child
+            labels = [str(axis.axis_label or "") for axis in getattr(obj, "yaxis", [])]
+            lower_labels = " ".join(labels).lower()
+            if any(keyword in lower_labels for keyword in keywords):
+                changed = True
+                continue
+            new_children.append(child)
+
+        if changed:
+            node.children = new_children
+
+    return layout
+
+
+def _legend_item_label_text(item: Any) -> str:
+    label = getattr(item, "label", None)
+    if isinstance(label, dict):
+        return str(label.get("value", ""))
+    return str(label)
+
+
+def _remove_yes_price_profitability_legend_items(fig: Any) -> set[Any]:
+    renderers_to_drop: set[Any] = set()
+
+    for legend in getattr(fig, "legend", []):
+        kept_items = []
+        for item in list(getattr(legend, "items", [])):
+            lower = _legend_item_label_text(item).lower()
+            if "profitable" in lower or "losing" in lower:
+                for renderer in getattr(item, "renderers", []):
+                    renderers_to_drop.add(renderer)
+                continue
+            kept_items.append(item)
+        legend.items = kept_items
+
+    return renderers_to_drop
+
+
+def _remove_yes_price_profitability_connectors(layout: Any) -> None:
+    """
+    Remove profitable/losing connector overlays from the YES price panel.
+    """
+    yes_fig = None
+    for fig in _iter_figures(layout):
+        labels = [str(axis.axis_label or "") for axis in getattr(fig, "yaxis", [])]
+        if any(label == "YES Price" for label in labels):
+            yes_fig = fig
+            break
+
+    if yes_fig is None:
+        return
+
+    renderers_to_drop = _remove_yes_price_profitability_legend_items(yes_fig)
+
+    # Drop any unlabeled multiline overlays as a safety net.
+    for renderer in getattr(yes_fig, "renderers", []):
+        glyph = getattr(renderer, "glyph", None)
+        if glyph is not None and glyph.__class__.__name__ == "MultiLine":
+            renderers_to_drop.add(renderer)
+
+    if renderers_to_drop:
+        yes_fig.renderers = [r for r in yes_fig.renderers if r not in renderers_to_drop]
+
+
 def _focus_allocation_panel(layout: Any) -> None:
     try:
         from bokeh.models import Range1d
@@ -1000,10 +1081,11 @@ def _focus_allocation_panel(layout: Any) -> None:
 def _apply_layout_overrides(layout: Any, initial_cash: float) -> Any:
     layout = _remove_data_banner(layout)
     _focus_allocation_panel(layout)
+    _remove_yes_price_profitability_connectors(layout)
 
     equity_timeline = _extract_equity_timeline(layout)
     daily = _build_daily_performance(equity_timeline, initial_cash=initial_cash)
-    _rebuild_daily_pnl_panel(layout, daily)
+    layout = _remove_periodic_pnl_panel(layout)
     layout = _replace_monthly_with_daily_returns(layout, daily)
 
     return layout
