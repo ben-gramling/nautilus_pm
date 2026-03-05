@@ -20,16 +20,19 @@ from decimal import Decimal
 
 import pandas as pd
 
-from nautilus_trader.adapters.kalshi.spread_capture import discover_spread_capture_markets
-from nautilus_trader.adapters.kalshi.spread_capture import load_spread_capture_market
-from nautilus_trader.adapters.kalshi.spread_capture import print_spread_capture_summary
-from nautilus_trader.adapters.kalshi.spread_capture import run_spread_capture_backtest
+from nautilus_trader.adapters.kalshi.fee_model import KalshiProportionalFeeModel
+from nautilus_trader.adapters.kalshi.research import discover_markets
+from nautilus_trader.adapters.kalshi.research import load_market_bars
+from nautilus_trader.adapters.prediction_market.research import print_backtest_summary
+from nautilus_trader.adapters.prediction_market.research import run_market_backtest
 from nautilus_trader.core import nautilus_pyo3
+from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.trading.strategy import Strategy
 from nautilus_trader.trading.strategy import StrategyConfig
 
@@ -165,12 +168,13 @@ async def run() -> None:
     )
 
     print(f"Discovering top {MAX_MARKETS} active Kalshi markets by 24h volume...")
-    candidates = await discover_spread_capture_markets(
-        candidate_limit=CANDIDATE_LIMIT,
+    candidates = await discover_markets(
         http_client=http_client,
-        price_min=PRICE_MIN,
-        price_max=PRICE_MAX,
-        min_days_to_resolution=MIN_DAYS_TO_RESOLUTION,
+        candidate_limit=CANDIDATE_LIMIT,
+        min_volume_24h=0.0,
+        yes_price_min=PRICE_MIN,
+        yes_price_max=PRICE_MAX,
+        min_days_to_expiry=MIN_DAYS_TO_RESOLUTION,
     )
     print(f"Found {len(candidates)} markets → scanning for {MIN_BARS}+ bars...")
 
@@ -189,7 +193,7 @@ async def run() -> None:
             )
             break
         scanned += 1
-        market_data = await load_spread_capture_market(
+        market_data = await load_market_bars(
             market=market,
             start=start,
             end=end,
@@ -205,10 +209,10 @@ async def run() -> None:
         ticker = market["ticker"]
         print(f"  {ticker}: {len(bars)} bars → running backtest...")
         bar_type = bars[0].bar_type
-        result = run_spread_capture_backtest(
-            ticker=ticker,
-            loader=loader,
-            bars=bars,
+        result = run_market_backtest(
+            market_id=ticker,
+            instrument=loader.instrument,
+            data=bars,
             strategy=BarMeanReversion(
                 config=BarMeanReversionConfig(
                     instrument_id=loader.instrument.id,
@@ -222,12 +226,25 @@ async def run() -> None:
             ),
             strategy_name=f"{NAME}:{ticker}",
             output_prefix=NAME,
+            platform="kalshi",
+            venue=Venue("KALSHI"),
+            base_currency=USD,
+            fee_model=KalshiProportionalFeeModel(),
             initial_cash=INITIAL_CASH,
             probability_window=WINDOW,
+            price_attr="close",
+            count_key="bars",
+            market_key="ticker",
         )
         results.append(result)
 
-    print_spread_capture_summary(results)
+    print_backtest_summary(
+        results=results,
+        market_key="ticker",
+        count_key="bars",
+        count_label="Bars",
+        pnl_label="PnL (USD)",
+    )
     print(f"\nLegacy charts saved to output/{NAME}_<ticker>_legacy.html")
 
 

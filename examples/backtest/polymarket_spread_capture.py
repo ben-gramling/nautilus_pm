@@ -17,10 +17,13 @@ from decimal import Decimal
 
 import pandas as pd
 
-from nautilus_trader.adapters.polymarket.spread_capture import discover_spread_capture_slugs
-from nautilus_trader.adapters.polymarket.spread_capture import load_spread_capture_market
-from nautilus_trader.adapters.polymarket.spread_capture import print_spread_capture_summary
-from nautilus_trader.adapters.polymarket.spread_capture import run_spread_capture_backtest
+from nautilus_trader.adapters.polymarket import POLYMARKET_VENUE
+from nautilus_trader.adapters.polymarket.fee_model import PolymarketFeeModel
+from nautilus_trader.adapters.polymarket.research import discover_markets
+from nautilus_trader.adapters.polymarket.research import load_market_trades
+from nautilus_trader.adapters.prediction_market.research import print_backtest_summary
+from nautilus_trader.adapters.prediction_market.research import run_market_backtest
+from nautilus_trader.model.currencies import USDC_POS
 from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.enums import TimeInForce
@@ -145,17 +148,19 @@ async def run() -> None:
     end = pd.Timestamp(now)
 
     print(f"Discovering top {CANDIDATE_LIMIT} active Polymarket markets by volume...")
-    slugs = await discover_spread_capture_slugs(
+    markets = await discover_markets(
         candidate_limit=CANDIDATE_LIMIT,
-        lookback_days=LOOKBACK_DAYS,
-        price_min=PRICE_MIN,
-        price_max=PRICE_MAX,
+        min_volume_24h=0.0,
+        yes_price_min=PRICE_MIN,
+        yes_price_max=PRICE_MAX,
+        min_days_to_expiry=LOOKBACK_DAYS,
     )
+    slugs = [str(market.get("slug", "")) for market in markets if market.get("slug")]
     print(f"Found {len(slugs)} markets → fetching trades in parallel...\n")
 
     loaded = await asyncio.gather(
         *[
-            load_spread_capture_market(
+            load_market_trades(
                 slug=slug,
                 start=start,
                 end=end,
@@ -174,10 +179,10 @@ async def run() -> None:
             continue
         loader, trades = market_data
         print(f"  {slug}: {len(trades)} trades → running backtest...")
-        result = run_spread_capture_backtest(
-            slug=slug,
-            loader=loader,
-            trades=trades,
+        result = run_market_backtest(
+            market_id=slug,
+            instrument=loader.instrument,
+            data=trades,
             strategy=SpreadCapture(
                 SpreadCaptureConfig(
                     instrument_id=loader.instrument.id,
@@ -190,12 +195,25 @@ async def run() -> None:
             ),
             strategy_name=f"{NAME}:{slug}",
             output_prefix=NAME,
+            platform="polymarket",
+            venue=POLYMARKET_VENUE,
+            base_currency=USDC_POS,
+            fee_model=PolymarketFeeModel(),
             initial_cash=INITIAL_CASH,
             probability_window=VWAP_WINDOW,
+            price_attr="price",
+            count_key="trades",
+            market_key="slug",
         )
         results.append(result)
 
-    print_spread_capture_summary(results)
+    print_backtest_summary(
+        results=results,
+        market_key="slug",
+        count_key="trades",
+        count_label="Trades",
+        pnl_label="PnL (USDC)",
+    )
     print(f"\nLegacy charts saved to output/{NAME}_<slug>_legacy.html")
 
 
