@@ -15,13 +15,19 @@ from datetime import datetime
 from datetime import timedelta
 from decimal import Decimal
 
-import msgspec
 import pandas as pd
 
 from nautilus_trader.adapters.polymarket import POLYMARKET_VENUE
 from nautilus_trader.adapters.polymarket import PolymarketDataLoader
 from nautilus_trader.adapters.polymarket.common.gamma_markets import list_markets
+from nautilus_trader.adapters.polymarket.common.market_selection import end_date_utc
+from nautilus_trader.adapters.polymarket.common.market_selection import volume_24h
+from nautilus_trader.adapters.polymarket.common.market_selection import yes_price
 from nautilus_trader.adapters.polymarket.fee_model import PolymarketFeeModel
+from nautilus_trader.adapters.prediction_market.backtest_utils import build_brier_inputs
+from nautilus_trader.adapters.prediction_market.backtest_utils import build_market_prices
+from nautilus_trader.adapters.prediction_market.backtest_utils import extract_price_points
+from nautilus_trader.adapters.prediction_market.backtest_utils import extract_realized_pnl
 from nautilus_trader.analysis.legacy_plot_adapter import create_legacy_backtest_chart
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
@@ -176,32 +182,7 @@ async def _discover_slugs(candidate_limit: int) -> list[str]:
     now = datetime.now(UTC)
     min_end = now + timedelta(days=LOOKBACK_DAYS)
 
-    def _vol24h(m: dict) -> float:
-        try:
-            return float(m.get("volume24hr", 0) or 0)
-        except (TypeError, ValueError):
-            return 0.0
-
-    def _yes_price(m: dict) -> float | None:
-        raw = m.get("outcomePrices")
-        if not raw:
-            return None
-        try:
-            prices = msgspec.json.decode(raw) if isinstance(raw, bytes | str) else raw
-            return float(prices[0])
-        except Exception:
-            return None
-
-    def _end_date(m: dict) -> datetime | None:
-        raw = m.get("endDate") or m.get("end_date_iso")
-        if not raw:
-            return None
-        try:
-            return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-        except Exception:
-            return None
-
-    markets.sort(key=_vol24h, reverse=True)
+    markets.sort(key=volume_24h, reverse=True)
 
     slugs: list[str] = []
     skipped = {"price": 0, "end_date": 0, "no_volume": 0}
@@ -209,14 +190,14 @@ async def _discover_slugs(candidate_limit: int) -> list[str]:
         slug = m.get("slug", "")
         if not slug:
             continue
-        if _vol24h(m) <= 0:
+        if volume_24h(m) <= 0:
             skipped["no_volume"] += 1
             continue
-        price = _yes_price(m)
+        price = yes_price(m)
         if price is None or not (PRICE_MIN <= price <= PRICE_MAX):
             skipped["price"] += 1
             continue
-        end = _end_date(m)
+        end = end_date_utc(m)
         if end is not None and end < min_end:
             skipped["end_date"] += 1
             continue
@@ -257,120 +238,6 @@ async def _load_market(
     except Exception as exc:
         print(f"  skip {slug}: {exc}")
         return None
-
-
-def _extract_pnl(pos_report: pd.DataFrame) -> float:
-    """Parse total realized PnL from a positions report DataFrame."""
-    total = 0.0
-    for _, row in pos_report.iterrows():
-        pnl_str = str(row.get("realized_pnl", "")).strip()
-        if pnl_str and pnl_str.lower() != "nan":
-            try:  # noqa: SIM105
-                total += float(pnl_str.split()[0].replace("\u2212", "-"))
-            except (ValueError, IndexError):
-                pass
-    return total
-
-
-def _build_brier_inputs_from_trades(
-    trades: list[TradeTick],
-    window: int,
-) -> tuple[pd.Series, pd.Series, pd.Series]:
-    """
-    Build user/market/outcome series for cumulative Brier advantage.
-
-    For active (unresolved) markets, this uses a terminal-price proxy outcome:
-    outcome = 1 if final observed price >= 0.5 else 0.
-    """
-    empty = pd.Series(dtype=float)
-    if not trades or window <= 0:
-        return empty, empty, empty
-
-    timestamps: list[pd.Timestamp] = []
-    prices: list[float] = []
-    for tick in trades:
-        ts_ns = getattr(tick, "ts_event", None) or getattr(tick, "ts_init", None)
-        if ts_ns is None:
-            continue
-        try:
-            ts = pd.to_datetime(int(ts_ns), unit="ns", utc=True)
-            price = float(tick.price)
-        except (TypeError, ValueError):
-            continue
-        timestamps.append(ts)
-        prices.append(price)
-
-    if not timestamps:
-        return empty, empty, empty
-
-    frame = pd.DataFrame(
-        {
-            "ts": timestamps,
-            "market_probability": prices,
-        }
-    )
-    frame = (
-        frame.dropna()
-        .sort_values("ts")
-        .drop_duplicates(subset=["ts"], keep="last")
-        .set_index("ts")
-    )
-    if frame.empty:
-        return empty, empty, empty
-
-    frame["market_probability"] = frame["market_probability"].clip(0.0, 1.0)
-    frame["user_probability"] = (
-        frame["market_probability"]
-        .rolling(window=window, min_periods=window)
-        .mean()
-        .clip(0.0, 1.0)
-    )
-    frame["outcome"] = float(frame["market_probability"].iloc[-1] >= 0.5)
-
-    frame = frame.dropna(subset=["user_probability", "market_probability", "outcome"])
-    if frame.empty:
-        return empty, empty, empty
-
-    return (
-        frame["user_probability"].copy(),
-        frame["market_probability"].copy(),
-        frame["outcome"].copy(),
-    )
-
-
-def _build_market_prices_from_trades(trades: list[TradeTick]) -> list[tuple[datetime, float]]:
-    """
-    Convert trade ticks to `(timestamp, yes_price)` points for legacy plotting.
-    """
-    points: list[tuple[datetime, float]] = []
-    for tick in trades:
-        ts_ns = getattr(tick, "ts_event", None) or getattr(tick, "ts_init", None)
-        if ts_ns is None:
-            continue
-        ts = _to_naive_utc(ts_ns)
-        if ts is None:
-            continue
-        points.append((ts, float(tick.price)))
-
-    if not points:
-        return []
-
-    frame = pd.DataFrame(points, columns=["ts", "price"]).sort_values("ts")
-    frame = frame.drop_duplicates(subset=["ts"], keep="last")
-    return [(row.ts.to_pydatetime(), float(row.price)) for row in frame.itertuples(index=False)]
-
-
-def _to_naive_utc(value: object) -> datetime | None:
-    ts = pd.to_datetime(value, unit="ns", utc=True, errors="coerce")
-    if pd.isna(ts):
-        return None
-    if isinstance(ts, pd.DatetimeIndex):
-        if len(ts) == 0:
-            return None
-        ts = ts[0]
-    assert isinstance(ts, pd.Timestamp)
-    return ts.tz_convert("UTC").tz_localize(None).to_pydatetime()
-
 
 def _run_backtest(
     slug: str,
@@ -413,9 +280,10 @@ def _run_backtest(
 
     fills = engine.trader.generate_order_fills_report()
     positions = engine.trader.generate_positions_report()
-    pnl = _extract_pnl(positions)
-    user_probabilities, market_probabilities, outcomes = _build_brier_inputs_from_trades(
-        trades=trades,
+    pnl = extract_realized_pnl(positions)
+    price_points = extract_price_points(trades, price_attr="price")
+    user_probabilities, market_probabilities, outcomes = build_brier_inputs(
+        points=price_points,
         window=VWAP_WINDOW,
     )
 
@@ -427,7 +295,7 @@ def _run_backtest(
         strategy_name=f"{NAME}:{slug}",
         platform="polymarket",
         initial_cash=INITIAL_CASH,
-        market_prices={str(instrument.id): _build_market_prices_from_trades(trades)},
+        market_prices={str(instrument.id): build_market_prices(price_points)},
         user_probabilities=user_probabilities,
         market_probabilities=market_probabilities,
         outcomes=outcomes,

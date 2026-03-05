@@ -23,8 +23,15 @@ import pandas as pd
 
 from nautilus_trader.adapters.kalshi.fee_model import KalshiProportionalFeeModel
 from nautilus_trader.adapters.kalshi.loaders import KalshiDataLoader
+from nautilus_trader.adapters.kalshi.market_selection import end_date_utc
+from nautilus_trader.adapters.kalshi.market_selection import volume_24h
+from nautilus_trader.adapters.kalshi.market_selection import yes_price
 from nautilus_trader.adapters.kalshi.providers import KALSHI_REST_BASE
 from nautilus_trader.adapters.kalshi.providers import market_dict_to_instrument
+from nautilus_trader.adapters.prediction_market.backtest_utils import build_brier_inputs
+from nautilus_trader.adapters.prediction_market.backtest_utils import build_market_prices
+from nautilus_trader.adapters.prediction_market.backtest_utils import extract_price_points
+from nautilus_trader.adapters.prediction_market.backtest_utils import extract_realized_pnl
 from nautilus_trader.analysis.legacy_plot_adapter import create_legacy_backtest_chart
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
@@ -167,57 +174,6 @@ class BarMeanReversion(Strategy):
         self._pending = True
 
 
-def _vol24h(m: dict) -> float:
-    """Extract volume from a Kalshi market dict as a float.
-
-    Tries ``volume_24h``, ``volume_fp`` (REST markets endpoint), and
-    ``volume`` (candlestick endpoint) in order.
-    """
-    for key in ("volume_24h", "volume_fp", "volume"):
-        raw = m.get(key)
-        if raw is not None:
-            try:
-                v = float(raw)
-                if v > 0:
-                    return v
-            except (TypeError, ValueError):
-                continue
-    return 0.0
-
-
-def _yes_price_kalshi(m: dict) -> float | None:
-    """Extract and normalize the current YES price from a Kalshi market dict.
-
-    The REST ``/markets`` and ``/events`` endpoints expose the price under
-    ``last_price_dollars`` (decimal 0–1 string).  Older fields like
-    ``yes_bid_dollars``, ``yes_price_dollars``, and the legacy integer-cents
-    ``yes_price`` are tried as fallbacks.
-    """
-    for key in ("last_price_dollars", "yes_bid_dollars", "yes_price_dollars", "yes_price"):
-        raw = m.get(key)
-        if raw is not None:
-            try:
-                p = float(raw)
-                if p >= 1.0:
-                    p /= 100.0  # legacy integer cents → dollars
-                if 0.0 < p < 1.0:
-                    return p
-            except (TypeError, ValueError):
-                continue
-    return None
-
-
-def _end_date_kalshi(m: dict) -> datetime | None:
-    """Parse the market expiry from a Kalshi market dict."""
-    raw = m.get("close_time") or m.get("latest_expiration_time")
-    if not raw:
-        return None
-    try:
-        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-    except Exception:  # noqa: BLE001
-        return None
-
-
 async def _discover_markets(
     candidate_limit: int,
     http_client: nautilus_pyo3.HttpClient,
@@ -282,20 +238,20 @@ async def _discover_markets(
     skipped = {"price": 0, "end_date": 0, "no_volume": 0}
     filtered: list[dict] = []
     for m in all_markets:
-        if _vol24h(m) <= 0:
+        if volume_24h(m) <= 0:
             skipped["no_volume"] += 1
             continue
-        price = _yes_price_kalshi(m)
+        price = yes_price(m)
         if price is None or not (PRICE_MIN <= price <= PRICE_MAX):
             skipped["price"] += 1
             continue
-        end = _end_date_kalshi(m)
+        end = end_date_utc(m)
         if end is not None and end < min_end:
             skipped["end_date"] += 1
             continue
         filtered.append(m)
 
-    filtered.sort(key=_vol24h, reverse=True)
+    filtered.sort(key=volume_24h, reverse=True)
     print(
         f"  Selected {min(len(filtered), candidate_limit)} markets "
         f"(skipped: {skipped['price']} by price, "
@@ -370,121 +326,6 @@ async def _load_market(
         print(f"  skip {ticker}: {exc}")
         return None
 
-
-def _extract_pnl(pos_report: pd.DataFrame) -> float:
-    """Parse total realized PnL from a positions report DataFrame."""
-    total = 0.0
-    for _, row in pos_report.iterrows():
-        pnl_str = str(row.get("realized_pnl", "")).strip()
-        if pnl_str and pnl_str.lower() != "nan":
-            try:  # noqa: SIM105
-                # Money strings look like "-1.00 USD"; handle unicode minus.
-                total += float(pnl_str.split()[0].replace("\u2212", "-"))
-            except (ValueError, IndexError):
-                pass
-    return total
-
-
-def _build_brier_inputs_from_bars(
-    bars: list[Bar],
-    window: int,
-) -> tuple[pd.Series, pd.Series, pd.Series]:
-    """
-    Build user/market/outcome series for cumulative Brier advantage.
-
-    For active (unresolved) markets, this uses a terminal-price proxy outcome:
-    outcome = 1 if final observed close >= 0.5 else 0.
-    """
-    empty = pd.Series(dtype=float)
-    if not bars or window <= 0:
-        return empty, empty, empty
-
-    timestamps: list[pd.Timestamp] = []
-    prices: list[float] = []
-    for bar in bars:
-        ts_ns = getattr(bar, "ts_event", None) or getattr(bar, "ts_init", None)
-        if ts_ns is None:
-            continue
-        try:
-            ts = pd.to_datetime(int(ts_ns), unit="ns", utc=True)
-            price = float(bar.close)
-        except (TypeError, ValueError):
-            continue
-        timestamps.append(ts)
-        prices.append(price)
-
-    if not timestamps:
-        return empty, empty, empty
-
-    frame = pd.DataFrame(
-        {
-            "ts": timestamps,
-            "market_probability": prices,
-        }
-    )
-    frame = (
-        frame.dropna()
-        .sort_values("ts")
-        .drop_duplicates(subset=["ts"], keep="last")
-        .set_index("ts")
-    )
-    if frame.empty:
-        return empty, empty, empty
-
-    frame["market_probability"] = frame["market_probability"].clip(0.0, 1.0)
-    frame["user_probability"] = (
-        frame["market_probability"]
-        .rolling(window=window, min_periods=window)
-        .mean()
-        .clip(0.0, 1.0)
-    )
-    frame["outcome"] = float(frame["market_probability"].iloc[-1] >= 0.5)
-
-    frame = frame.dropna(subset=["user_probability", "market_probability", "outcome"])
-    if frame.empty:
-        return empty, empty, empty
-
-    return (
-        frame["user_probability"].copy(),
-        frame["market_probability"].copy(),
-        frame["outcome"].copy(),
-    )
-
-
-def _to_naive_utc(value: object) -> datetime | None:
-    ts = pd.to_datetime(value, unit="ns", utc=True, errors="coerce")
-    if pd.isna(ts):
-        return None
-    if isinstance(ts, pd.DatetimeIndex):
-        if len(ts) == 0:
-            return None
-        ts = ts[0]
-    assert isinstance(ts, pd.Timestamp)
-    return ts.tz_convert("UTC").tz_localize(None).to_pydatetime()
-
-
-def _build_market_prices_from_bars(bars: list[Bar]) -> list[tuple[datetime, float]]:
-    """
-    Convert bars to `(timestamp, close_price)` points for legacy plotting.
-    """
-    points: list[tuple[datetime, float]] = []
-    for bar in bars:
-        ts_ns = getattr(bar, "ts_event", None) or getattr(bar, "ts_init", None)
-        if ts_ns is None:
-            continue
-        ts = _to_naive_utc(ts_ns)
-        if ts is None:
-            continue
-        points.append((ts, float(bar.close)))
-
-    if not points:
-        return []
-
-    frame = pd.DataFrame(points, columns=["ts", "price"]).sort_values("ts")
-    frame = frame.drop_duplicates(subset=["ts"], keep="last")
-    return [(row.ts.to_pydatetime(), float(row.price)) for row in frame.itertuples(index=False)]
-
-
 def _run_backtest(ticker: str, loader: KalshiDataLoader, bars: list[Bar]) -> dict:
     """Run one market's backtest and return a results dict."""
     instrument = loader.instrument
@@ -524,9 +365,10 @@ def _run_backtest(ticker: str, loader: KalshiDataLoader, bars: list[Bar]) -> dic
 
     fills = engine.trader.generate_order_fills_report()
     positions = engine.trader.generate_positions_report()
-    pnl = _extract_pnl(positions)
-    user_probabilities, market_probabilities, outcomes = _build_brier_inputs_from_bars(
-        bars=bars,
+    pnl = extract_realized_pnl(positions)
+    price_points = extract_price_points(bars, price_attr="close")
+    user_probabilities, market_probabilities, outcomes = build_brier_inputs(
+        points=price_points,
         window=WINDOW,
     )
 
@@ -538,7 +380,7 @@ def _run_backtest(ticker: str, loader: KalshiDataLoader, bars: list[Bar]) -> dic
         strategy_name=f"{NAME}:{ticker}",
         platform="kalshi",
         initial_cash=INITIAL_CASH,
-        market_prices={str(instrument.id): _build_market_prices_from_bars(bars)},
+        market_prices={str(instrument.id): build_market_prices(price_points)},
         user_probabilities=user_probabilities,
         market_probabilities=market_probabilities,
         outcomes=outcomes,
