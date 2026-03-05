@@ -16,6 +16,22 @@
 Prediction market strategy examples.
 """
 
+from nautilus_trader.examples.strategies.prediction_market.breakout import BarBreakoutConfig
+from nautilus_trader.examples.strategies.prediction_market.breakout import BarBreakoutStrategy
+from nautilus_trader.examples.strategies.prediction_market.breakout import TradeTickBreakoutConfig
+from nautilus_trader.examples.strategies.prediction_market.breakout import TradeTickBreakoutStrategy
+from nautilus_trader.examples.strategies.prediction_market.ema_crossover import (
+    BarEMACrossoverConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market.ema_crossover import (
+    BarEMACrossoverStrategy,
+)
+from nautilus_trader.examples.strategies.prediction_market.ema_crossover import (
+    TradeTickEMACrossoverConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market.ema_crossover import (
+    TradeTickEMACrossoverStrategy,
+)
 from nautilus_trader.examples.strategies.prediction_market.mean_reversion import (
     BarMeanReversionConfig,
 )
@@ -28,11 +44,55 @@ from nautilus_trader.examples.strategies.prediction_market.mean_reversion import
 from nautilus_trader.examples.strategies.prediction_market.mean_reversion import (
     TradeTickMeanReversionStrategy,
 )
+from nautilus_trader.examples.strategies.prediction_market.panic_fade import BarPanicFadeConfig
+from nautilus_trader.examples.strategies.prediction_market.panic_fade import BarPanicFadeStrategy
+from nautilus_trader.examples.strategies.prediction_market.panic_fade import (
+    TradeTickPanicFadeConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market.panic_fade import (
+    TradeTickPanicFadeStrategy,
+)
+from nautilus_trader.examples.strategies.prediction_market.rsi_reversion import (
+    BarRSIReversionConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market.rsi_reversion import (
+    BarRSIReversionStrategy,
+)
+from nautilus_trader.examples.strategies.prediction_market.rsi_reversion import (
+    TradeTickRSIReversionConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market.rsi_reversion import (
+    TradeTickRSIReversionStrategy,
+)
+from nautilus_trader.examples.strategies.prediction_market.vwap_reversion import (
+    TradeTickVWAPReversionConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market.vwap_reversion import (
+    TradeTickVWAPReversionStrategy,
+)
 
 
 __all__ = [
+    "BarBreakoutConfig",
+    "BarBreakoutStrategy",
+    "BarEMACrossoverConfig",
+    "BarEMACrossoverStrategy",
     "BarMeanReversionConfig",
     "BarMeanReversionStrategy",
+    "BarPanicFadeConfig",
+    "BarPanicFadeStrategy",
+    "BarRSIReversionConfig",
+    "BarRSIReversionStrategy",
+    "TradeTickBreakoutConfig",
+    "TradeTickBreakoutStrategy",
+    "TradeTickEMACrossoverConfig",
+    "TradeTickEMACrossoverStrategy",
     "TradeTickMeanReversionConfig",
     "TradeTickMeanReversionStrategy",
+    "TradeTickPanicFadeConfig",
+    "TradeTickPanicFadeStrategy",
+    "TradeTickRSIReversionConfig",
+    "TradeTickRSIReversionStrategy",
+    "TradeTickVWAPReversionConfig",
+    "TradeTickVWAPReversionStrategy",
 ]

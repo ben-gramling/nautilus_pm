@@ -28,55 +28,83 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import StrategyConfig
 
 
-class _MeanReversionConfig(Protocol):
+class _RSIReversionConfig(Protocol):
     instrument_id: InstrumentId
     trade_size: Decimal
-    entry_threshold: float
+    period: int
+    entry_rsi: float
+    exit_rsi: float
     take_profit: float
     stop_loss: float
 
 
-class BarMeanReversionConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
+class BarRSIReversionConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
     instrument_id: InstrumentId
     bar_type: BarType
     trade_size: Decimal = Decimal(1)
-    window: int = 20
-    entry_threshold: float = 0.0
-    take_profit: float = 0.0
-    stop_loss: float = 0.0
+    period: int = 14
+    entry_rsi: float = 30.0
+    exit_rsi: float = 55.0
+    take_profit: float = 0.03
+    stop_loss: float = 0.02
 
 
-class TradeTickMeanReversionConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
+class TradeTickRSIReversionConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
     instrument_id: InstrumentId
     trade_size: Decimal = Decimal(1)
-    vwap_window: int = 20
-    entry_threshold: float = 0.0
-    take_profit: float = 0.0
-    stop_loss: float = 0.0
+    period: int = 40
+    entry_rsi: float = 25.0
+    exit_rsi: float = 52.0
+    take_profit: float = 0.02
+    stop_loss: float = 0.015
 
 
-class _MeanReversionBase(LongOnlyPredictionMarketStrategy):
+class _RSIReversionBase(LongOnlyPredictionMarketStrategy):
     """
-    Single-instrument mean-reversion base with one open position max.
+    Long-only RSI pullback strategy for mean reversion in prediction-market prices.
     """
 
-    _window_field = "window"
-
-    def __init__(self, config: _MeanReversionConfig) -> None:
+    def __init__(self, config: _RSIReversionConfig) -> None:
         super().__init__(config)
-        self._prices: deque[float] = deque(maxlen=self._window())
+        self._prices: deque[float] = deque(maxlen=int(self.config.period) + 1)
 
-    def _window(self) -> int:
-        return int(getattr(self.config, self._window_field))
+    def _compute_rsi(self) -> float | None:
+        if len(self._prices) < int(self.config.period) + 1:
+            return None
+
+        gains = 0.0
+        losses = 0.0
+        last = None
+        for value in self._prices:
+            if last is None:
+                last = value
+                continue
+            change = value - last
+            if change > 0.0:
+                gains += change
+            else:
+                losses -= change
+            last = value
+
+        period = float(self.config.period)
+        avg_gain = gains / period
+        avg_loss = losses / period
+        if avg_loss == 0.0:
+            return 100.0
+        rs = avg_gain / avg_loss
+        return 100.0 - (100.0 / (1.0 + rs))
 
     def _on_price(self, price: float) -> None:
         self._prices.append(price)
-        if len(self._prices) < self._window() or self._pending:
+        if self._pending:
             return
 
-        rolling_avg = sum(self._prices) / len(self._prices)
+        rsi = self._compute_rsi()
+        if rsi is None:
+            return
+
         if not self._in_position():
-            if price <= rolling_avg - self.config.entry_threshold:
+            if rsi <= float(self.config.entry_rsi):
                 self._submit_entry()
             return
 
@@ -87,12 +115,15 @@ class _MeanReversionBase(LongOnlyPredictionMarketStrategy):
         ):
             return
 
+        if rsi >= float(self.config.exit_rsi):
+            self._submit_exit()
+
     def on_reset(self) -> None:
         super().on_reset()
         self._prices.clear()
 
 
-class BarMeanReversionStrategy(_MeanReversionBase):
+class BarRSIReversionStrategy(_RSIReversionBase):
     def _subscribe(self) -> None:
         self.subscribe_bars(self.config.bar_type)
 
@@ -100,9 +131,7 @@ class BarMeanReversionStrategy(_MeanReversionBase):
         self._on_price(float(bar.close))
 
 
-class TradeTickMeanReversionStrategy(_MeanReversionBase):
-    _window_field = "vwap_window"
-
+class TradeTickRSIReversionStrategy(_RSIReversionBase):
     def _subscribe(self) -> None:
         self.subscribe_trade_ticks(self.config.instrument_id)
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import deque
 from decimal import Decimal
+from math import sqrt
 from typing import Protocol
 
 from nautilus_trader.examples.strategies.prediction_market.core import (
@@ -28,55 +29,59 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import StrategyConfig
 
 
-class _MeanReversionConfig(Protocol):
+class _BreakoutConfig(Protocol):
     instrument_id: InstrumentId
     trade_size: Decimal
-    entry_threshold: float
+    window: int
+    breakout_std: float
+    max_entry_price: float
     take_profit: float
     stop_loss: float
 
 
-class BarMeanReversionConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
+class BarBreakoutConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
     instrument_id: InstrumentId
     bar_type: BarType
     trade_size: Decimal = Decimal(1)
-    window: int = 20
-    entry_threshold: float = 0.0
-    take_profit: float = 0.0
-    stop_loss: float = 0.0
+    window: int = 30
+    breakout_std: float = 1.25
+    max_entry_price: float = 0.92
+    take_profit: float = 0.02
+    stop_loss: float = 0.02
 
 
-class TradeTickMeanReversionConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
+class TradeTickBreakoutConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
     instrument_id: InstrumentId
     trade_size: Decimal = Decimal(1)
-    vwap_window: int = 20
-    entry_threshold: float = 0.0
-    take_profit: float = 0.0
-    stop_loss: float = 0.0
+    window: int = 120
+    breakout_std: float = 1.5
+    max_entry_price: float = 0.92
+    take_profit: float = 0.015
+    stop_loss: float = 0.02
 
 
-class _MeanReversionBase(LongOnlyPredictionMarketStrategy):
+class _BreakoutBase(LongOnlyPredictionMarketStrategy):
     """
-    Single-instrument mean-reversion base with one open position max.
+    Long-only breakout strategy with bounded entries for binary-outcome markets.
     """
 
-    _window_field = "window"
-
-    def __init__(self, config: _MeanReversionConfig) -> None:
+    def __init__(self, config: _BreakoutConfig) -> None:
         super().__init__(config)
-        self._prices: deque[float] = deque(maxlen=self._window())
-
-    def _window(self) -> int:
-        return int(getattr(self.config, self._window_field))
+        self._prices: deque[float] = deque(maxlen=int(self.config.window))
 
     def _on_price(self, price: float) -> None:
         self._prices.append(price)
-        if len(self._prices) < self._window() or self._pending:
+        if len(self._prices) < int(self.config.window) or self._pending:
             return
 
-        rolling_avg = sum(self._prices) / len(self._prices)
+        window = list(self._prices)
+        mean = sum(window) / len(window)
+        variance = sum((value - mean) ** 2 for value in window) / len(window)
+        std = sqrt(variance)
+        breakout_level = mean + float(self.config.breakout_std) * std
+
         if not self._in_position():
-            if price <= rolling_avg - self.config.entry_threshold:
+            if price >= breakout_level and price <= float(self.config.max_entry_price):
                 self._submit_entry()
             return
 
@@ -87,12 +92,15 @@ class _MeanReversionBase(LongOnlyPredictionMarketStrategy):
         ):
             return
 
+        if price <= mean:
+            self._submit_exit()
+
     def on_reset(self) -> None:
         super().on_reset()
         self._prices.clear()
 
 
-class BarMeanReversionStrategy(_MeanReversionBase):
+class BarBreakoutStrategy(_BreakoutBase):
     def _subscribe(self) -> None:
         self.subscribe_bars(self.config.bar_type)
 
@@ -100,9 +108,7 @@ class BarMeanReversionStrategy(_MeanReversionBase):
         self._on_price(float(bar.close))
 
 
-class TradeTickMeanReversionStrategy(_MeanReversionBase):
-    _window_field = "vwap_window"
-
+class TradeTickBreakoutStrategy(_BreakoutBase):
     def _subscribe(self) -> None:
         self.subscribe_trade_ticks(self.config.instrument_id)
 

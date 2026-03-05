@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from collections import deque
 from decimal import Decimal
 from typing import Protocol
 
@@ -28,55 +27,70 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import StrategyConfig
 
 
-class _MeanReversionConfig(Protocol):
+class _EMACrossoverConfig(Protocol):
     instrument_id: InstrumentId
     trade_size: Decimal
-    entry_threshold: float
+    fast_period: int
+    slow_period: int
+    entry_buffer: float
     take_profit: float
     stop_loss: float
 
 
-class BarMeanReversionConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
+class BarEMACrossoverConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
     instrument_id: InstrumentId
     bar_type: BarType
     trade_size: Decimal = Decimal(1)
-    window: int = 20
-    entry_threshold: float = 0.0
+    fast_period: int = 8
+    slow_period: int = 21
+    entry_buffer: float = 0.0
     take_profit: float = 0.0
     stop_loss: float = 0.0
 
 
-class TradeTickMeanReversionConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
+class TradeTickEMACrossoverConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
     instrument_id: InstrumentId
     trade_size: Decimal = Decimal(1)
-    vwap_window: int = 20
-    entry_threshold: float = 0.0
+    fast_period: int = 20
+    slow_period: int = 60
+    entry_buffer: float = 0.0
     take_profit: float = 0.0
     stop_loss: float = 0.0
 
 
-class _MeanReversionBase(LongOnlyPredictionMarketStrategy):
+class _EMACrossoverBase(LongOnlyPredictionMarketStrategy):
     """
-    Single-instrument mean-reversion base with one open position max.
+    Long-only trend strategy for prediction-market price momentum.
     """
 
-    _window_field = "window"
-
-    def __init__(self, config: _MeanReversionConfig) -> None:
+    def __init__(self, config: _EMACrossoverConfig) -> None:
         super().__init__(config)
-        self._prices: deque[float] = deque(maxlen=self._window())
-
-    def _window(self) -> int:
-        return int(getattr(self.config, self._window_field))
+        self._fast_ema: float | None = None
+        self._slow_ema: float | None = None
+        self._warmup: int = 0
+        self._warmup_needed = max(int(self.config.fast_period), int(self.config.slow_period))
+        self._alpha_fast = 2.0 / (float(self.config.fast_period) + 1.0)
+        self._alpha_slow = 2.0 / (float(self.config.slow_period) + 1.0)
 
     def _on_price(self, price: float) -> None:
-        self._prices.append(price)
-        if len(self._prices) < self._window() or self._pending:
+        if self._fast_ema is None or self._slow_ema is None:
+            self._fast_ema = price
+            self._slow_ema = price
+            self._warmup = 1
             return
 
-        rolling_avg = sum(self._prices) / len(self._prices)
+        self._fast_ema = self._alpha_fast * price + (1.0 - self._alpha_fast) * self._fast_ema
+        self._slow_ema = self._alpha_slow * price + (1.0 - self._alpha_slow) * self._slow_ema
+        self._warmup += 1
+
+        if self._warmup < self._warmup_needed or self._pending:
+            return
+
+        assert self._fast_ema is not None
+        assert self._slow_ema is not None
+
         if not self._in_position():
-            if price <= rolling_avg - self.config.entry_threshold:
+            if self._fast_ema >= self._slow_ema + self.config.entry_buffer:
                 self._submit_entry()
             return
 
@@ -87,12 +101,17 @@ class _MeanReversionBase(LongOnlyPredictionMarketStrategy):
         ):
             return
 
+        if self._fast_ema <= self._slow_ema - self.config.entry_buffer:
+            self._submit_exit()
+
     def on_reset(self) -> None:
         super().on_reset()
-        self._prices.clear()
+        self._fast_ema = None
+        self._slow_ema = None
+        self._warmup = 0
 
 
-class BarMeanReversionStrategy(_MeanReversionBase):
+class BarEMACrossoverStrategy(_EMACrossoverBase):
     def _subscribe(self) -> None:
         self.subscribe_bars(self.config.bar_type)
 
@@ -100,9 +119,7 @@ class BarMeanReversionStrategy(_MeanReversionBase):
         self._on_price(float(bar.close))
 
 
-class TradeTickMeanReversionStrategy(_MeanReversionBase):
-    _window_field = "vwap_window"
-
+class TradeTickEMACrossoverStrategy(_EMACrossoverBase):
     def _subscribe(self) -> None:
         self.subscribe_trade_ticks(self.config.instrument_id)
 

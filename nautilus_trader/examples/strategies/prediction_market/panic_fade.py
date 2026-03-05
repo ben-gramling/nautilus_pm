@@ -24,62 +24,73 @@ from nautilus_trader.examples.strategies.prediction_market.core import (
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.data import TradeTick
+from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import StrategyConfig
 
 
-class _MeanReversionConfig(Protocol):
+class _PanicFadeConfig(Protocol):
     instrument_id: InstrumentId
     trade_size: Decimal
-    entry_threshold: float
+    drop_window: int
+    min_drop: float
+    panic_price: float
+    rebound_exit: float
+    max_holding_periods: int
     take_profit: float
     stop_loss: float
 
 
-class BarMeanReversionConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
+class BarPanicFadeConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
     instrument_id: InstrumentId
     bar_type: BarType
     trade_size: Decimal = Decimal(1)
-    window: int = 20
-    entry_threshold: float = 0.0
-    take_profit: float = 0.0
-    stop_loss: float = 0.0
+    drop_window: int = 12
+    min_drop: float = 0.08
+    panic_price: float = 0.30
+    rebound_exit: float = 0.45
+    max_holding_periods: int = 36
+    take_profit: float = 0.06
+    stop_loss: float = 0.03
 
 
-class TradeTickMeanReversionConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
+class TradeTickPanicFadeConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
     instrument_id: InstrumentId
     trade_size: Decimal = Decimal(1)
-    vwap_window: int = 20
-    entry_threshold: float = 0.0
-    take_profit: float = 0.0
-    stop_loss: float = 0.0
+    drop_window: int = 80
+    min_drop: float = 0.06
+    panic_price: float = 0.30
+    rebound_exit: float = 0.42
+    max_holding_periods: int = 500
+    take_profit: float = 0.04
+    stop_loss: float = 0.03
 
 
-class _MeanReversionBase(LongOnlyPredictionMarketStrategy):
+class _PanicFadeBase(LongOnlyPredictionMarketStrategy):
     """
-    Single-instrument mean-reversion base with one open position max.
+    Buy panic selloffs below a threshold and exit on rebound, timeout, or risk.
     """
 
-    _window_field = "window"
-
-    def __init__(self, config: _MeanReversionConfig) -> None:
+    def __init__(self, config: _PanicFadeConfig) -> None:
         super().__init__(config)
-        self._prices: deque[float] = deque(maxlen=self._window())
-
-    def _window(self) -> int:
-        return int(getattr(self.config, self._window_field))
+        self._prices: deque[float] = deque(maxlen=int(self.config.drop_window))
+        self._holding_periods: int = 0
 
     def _on_price(self, price: float) -> None:
         self._prices.append(price)
-        if len(self._prices) < self._window() or self._pending:
+        if self._pending:
             return
 
-        rolling_avg = sum(self._prices) / len(self._prices)
         if not self._in_position():
-            if price <= rolling_avg - self.config.entry_threshold:
+            if len(self._prices) < int(self.config.drop_window):
+                return
+            peak = max(self._prices)
+            drop = peak - price
+            if price <= float(self.config.panic_price) and drop >= float(self.config.min_drop):
                 self._submit_entry()
             return
 
+        self._holding_periods += 1
         if self._risk_exit(
             price=price,
             take_profit=self.config.take_profit,
@@ -87,12 +98,24 @@ class _MeanReversionBase(LongOnlyPredictionMarketStrategy):
         ):
             return
 
+        if (
+            price >= float(self.config.rebound_exit)
+            or self._holding_periods >= int(self.config.max_holding_periods)
+        ):
+            self._submit_exit()
+
+    def on_order_filled(self, event) -> None:  # type: ignore[no-untyped-def]
+        super().on_order_filled(event)
+        if event.order_side == OrderSide.BUY:
+            self._holding_periods = 0
+
     def on_reset(self) -> None:
         super().on_reset()
         self._prices.clear()
+        self._holding_periods = 0
 
 
-class BarMeanReversionStrategy(_MeanReversionBase):
+class BarPanicFadeStrategy(_PanicFadeBase):
     def _subscribe(self) -> None:
         self.subscribe_bars(self.config.bar_type)
 
@@ -100,9 +123,7 @@ class BarMeanReversionStrategy(_MeanReversionBase):
         self._on_price(float(bar.close))
 
 
-class TradeTickMeanReversionStrategy(_MeanReversionBase):
-    _window_field = "vwap_window"
-
+class TradeTickPanicFadeStrategy(_PanicFadeBase):
     def _subscribe(self) -> None:
         self.subscribe_trade_ticks(self.config.instrument_id)
 
