@@ -12,8 +12,14 @@ Each script should only do orchestration:
 
 ## Current Scripts
 
+- `kalshi_ema_crossover.py`
+- `kalshi_breakout.py`
 - `kalshi_ema_bars.py`
 - `kalshi_spread_capture.py`
+- `polymarket_ema_crossover.py`
+- `polymarket_rsi_reversion.py`
+- `polymarket_vwap_reversion.py`
+- `polymarket_panic_fade.py`
 - `polymarket_simple_quoter.py`
 - `polymarket_spread_capture.py`
 - `polymarket_deep_value_resolution_hold.py`
