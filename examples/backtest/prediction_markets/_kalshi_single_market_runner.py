@@ -82,7 +82,8 @@ async def run_single_market_bar_backtest(
     min_price_range: float = 0.0,
     max_retries: int = 4,
     retry_base_delay: float = 2.0,
-    initial_cash: float = 1_000.0,
+    initial_cash: float = 100.0,
+    chart_resample_rule: str | None = None,
 ) -> None:
     now = datetime.now(UTC)
     start = pd.Timestamp(now - timedelta(days=lookback_days))
@@ -148,6 +149,7 @@ async def run_single_market_bar_backtest(
         probability_window=probability_window,
         price_attr="close",
         count_key="bars",
+        chart_resample_rule=chart_resample_rule,
         market_key="ticker",
     )
 

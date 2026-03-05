@@ -1,7 +1,7 @@
 """
 EMA-crossover momentum strategy on one Kalshi market.
 
-Defaults to KXALIENS-27 (from kalshi.com/markets/kxaliens/aliens/kxaliens-27)
+Defaults to KXNEXTIRANLEADER-45JAN01-MKHA
 and uses a 30-day minute-bar lookback.
 """
 
@@ -9,18 +9,27 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from decimal import Decimal
-
-from _kalshi_single_market_runner import run_single_market_bar_backtest
+from pathlib import Path
 
 from nautilus_trader.examples.strategies.prediction_market import BarEMACrossoverConfig
 from nautilus_trader.examples.strategies.prediction_market import BarEMACrossoverStrategy
 
 
+try:
+    from _kalshi_single_market_runner import run_single_market_bar_backtest
+except ModuleNotFoundError:
+    _THIS_DIR = Path(__file__).resolve().parent
+    if str(_THIS_DIR) not in sys.path:
+        sys.path.insert(0, str(_THIS_DIR))
+    from _kalshi_single_market_runner import run_single_market_bar_backtest
+
+
 NAME = "kalshi_ema_crossover"
 DESCRIPTION = "EMA crossover momentum on a single Kalshi market"
 
-MARKET_TICKER = os.getenv("MARKET_TICKER", "KXALIENS-27").upper()
+MARKET_TICKER = os.getenv("MARKET_TICKER", "KXNEXTIRANLEADER-45JAN01-MKHA").upper()
 LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "30"))
 BAR_INTERVAL = os.getenv("BAR_INTERVAL", "Minutes1")
 MIN_BARS = int(os.getenv("MIN_BARS", "1000"))
@@ -33,7 +42,7 @@ TAKE_PROFIT = float(os.getenv("TAKE_PROFIT", "0.030"))
 STOP_LOSS = float(os.getenv("STOP_LOSS", "0.020"))
 
 TRADE_SIZE = Decimal(os.getenv("TRADE_SIZE", "1"))
-INITIAL_CASH = float(os.getenv("INITIAL_CASH", "1000"))
+INITIAL_CASH = float(os.getenv("INITIAL_CASH", "100"))
 
 
 async def run() -> None:

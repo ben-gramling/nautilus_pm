@@ -1,5 +1,5 @@
 """
-Breakout strategy on one Kalshi market.
+RSI-reversion strategy on one Kalshi market.
 
 Defaults to KXNEXTIRANLEADER-45JAN01-MKHA
 and uses a 30-day minute-bar lookback.
@@ -13,8 +13,8 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
-from nautilus_trader.examples.strategies.prediction_market import BarBreakoutConfig
-from nautilus_trader.examples.strategies.prediction_market import BarBreakoutStrategy
+from nautilus_trader.examples.strategies.prediction_market import BarRSIReversionConfig
+from nautilus_trader.examples.strategies.prediction_market import BarRSIReversionStrategy
 
 
 try:
@@ -26,8 +26,8 @@ except ModuleNotFoundError:
     from _kalshi_single_market_runner import run_single_market_bar_backtest
 
 
-NAME = "kalshi_breakout"
-DESCRIPTION = "Volatility breakout strategy on a single Kalshi market"
+NAME = "kalshi_rsi_reversion"
+DESCRIPTION = "RSI pullback mean-reversion on a single Kalshi market"
 
 MARKET_TICKER = os.getenv("MARKET_TICKER", "KXNEXTIRANLEADER-45JAN01-MKHA").upper()
 LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "30"))
@@ -35,13 +35,13 @@ BAR_INTERVAL = os.getenv("BAR_INTERVAL", "Minutes1")
 MIN_BARS = int(os.getenv("MIN_BARS", "1000"))
 MIN_PRICE_RANGE = float(os.getenv("MIN_PRICE_RANGE", "0.03"))
 
-WINDOW = int(os.getenv("WINDOW", "60"))
-BREAKOUT_STD = float(os.getenv("BREAKOUT_STD", "1.35"))
-MAX_ENTRY_PRICE = float(os.getenv("MAX_ENTRY_PRICE", "0.90"))
-TAKE_PROFIT = float(os.getenv("TAKE_PROFIT", "0.025"))
-STOP_LOSS = float(os.getenv("STOP_LOSS", "0.020"))
+RSI_PERIOD = int(os.getenv("RSI_PERIOD", "30"))
+ENTRY_RSI = float(os.getenv("ENTRY_RSI", "35.0"))
+EXIT_RSI = float(os.getenv("EXIT_RSI", "55.0"))
+TAKE_PROFIT = float(os.getenv("TAKE_PROFIT", "0.015"))
+STOP_LOSS = float(os.getenv("STOP_LOSS", "0.015"))
 
-TRADE_SIZE = Decimal(os.getenv("TRADE_SIZE", "1"))
+TRADE_SIZE = Decimal(os.getenv("TRADE_SIZE", "10"))
 INITIAL_CASH = float(os.getenv("INITIAL_CASH", "100"))
 
 
@@ -54,15 +54,15 @@ async def run() -> None:
         min_bars=MIN_BARS,
         min_price_range=MIN_PRICE_RANGE,
         initial_cash=INITIAL_CASH,
-        probability_window=WINDOW,
-        strategy_factory=lambda instrument_id, bar_type: BarBreakoutStrategy(
-            config=BarBreakoutConfig(
+        probability_window=RSI_PERIOD,
+        strategy_factory=lambda instrument_id, bar_type: BarRSIReversionStrategy(
+            config=BarRSIReversionConfig(
                 instrument_id=instrument_id,
                 bar_type=bar_type,
                 trade_size=TRADE_SIZE,
-                window=WINDOW,
-                breakout_std=BREAKOUT_STD,
-                max_entry_price=MAX_ENTRY_PRICE,
+                period=RSI_PERIOD,
+                entry_rsi=ENTRY_RSI,
+                exit_rsi=EXIT_RSI,
                 take_profit=TAKE_PROFIT,
                 stop_loss=STOP_LOSS,
             ),

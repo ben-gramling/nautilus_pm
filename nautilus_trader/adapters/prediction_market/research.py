@@ -52,6 +52,7 @@ def run_market_backtest(
     probability_window: int,
     price_attr: str,
     count_key: str,
+    chart_resample_rule: str | None = None,
     market_key: str = "market",
     open_browser: bool = False,
 ) -> dict[str, Any]:
@@ -95,7 +96,12 @@ def run_market_backtest(
         strategy_name=strategy_name,
         platform=platform,
         initial_cash=initial_cash,
-        market_prices={str(instrument.id): build_market_prices(price_points)},
+        market_prices={
+            str(instrument.id): build_market_prices(
+                price_points,
+                resample_rule=chart_resample_rule,
+            ),
+        },
         user_probabilities=user_probabilities,
         market_probabilities=market_probabilities,
         outcomes=outcomes,
@@ -145,4 +151,3 @@ def print_backtest_summary(
     print(sep)
     print(f"{'TOTAL':<{col_w}} {'':>8} {total_fills:>6} {total_pnl:>+12.4f}")
     print(sep)
-

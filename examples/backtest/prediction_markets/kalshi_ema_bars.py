@@ -28,6 +28,7 @@ range you want to backtest.
 """
 
 import asyncio
+import os
 from decimal import Decimal
 
 import pandas as pd
@@ -53,11 +54,16 @@ DESCRIPTION = "Fetch Kalshi bars to catalog, then run EMA-cross backtest"
 # ---------------------------------------------------------------------------
 # Configure these constants for your backtest
 # ---------------------------------------------------------------------------
-MARKET_TICKER = "KXFEDCHAIRNOM-29-KW"        # Kalshi market ticker
-BAR_INTERVAL = "Hours1"           # Minutes1 | Hours1 | Days1
+MARKET_TICKER = os.getenv("MARKET_TICKER", "KXNEXTIRANLEADER-45JAN01-MKHA").upper()
+BAR_INTERVAL = os.getenv("BAR_INTERVAL", "Hours1")  # Minutes1 | Hours1 | Days1
 CATALOG_PATH = "./kalshi_catalog"  # Local directory for parquet catalog
-START = "2026-01-01"               # ISO 8601 UTC date string
-END = "2026-03-01"                 # ISO 8601 UTC exclusive end date
+LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "30"))
+_NOW_UTC = pd.Timestamp.now(tz="UTC")
+START = os.getenv(
+    "START",
+    (_NOW_UTC - pd.Timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%d"),
+)
+END = os.getenv("END", _NOW_UTC.strftime("%Y-%m-%d"))
 FAST_EMA = 10
 SLOW_EMA = 20
 TRADE_SIZE = Decimal("1")          # Number of contracts per trade  # noqa: FURB157
@@ -93,7 +99,7 @@ def run_backtest() -> None:
         oms_type="NETTING",
         account_type="CASH",
         base_currency="USD",
-        starting_balances=["10000 USD"],
+        starting_balances=["100 USD"],
     )
 
     data_config = BacktestDataConfig(

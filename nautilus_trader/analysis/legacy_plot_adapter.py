@@ -335,6 +335,20 @@ def _load_legacy_modules(repo_path: Path) -> tuple[Any, Any]:
     return models, plotting
 
 
+def _disable_legacy_downsampling(plotting_module: Any) -> None:
+    """
+    Force dense chart rendering by disabling legacy dataframe downsampling.
+    """
+    downsample_fn = getattr(plotting_module, "_downsample", None)
+    if downsample_fn is None:
+        return
+
+    def _identity_downsample(eq, fills_df, market_df, max_points=5000, alloc_df=None):  # noqa: ANN001
+        return eq, fills_df, market_df, alloc_df
+
+    plotting_module._downsample = _identity_downsample
+
+
 def _extract_account_report(engine: Any) -> pd.DataFrame:
     accounts = []
 
@@ -754,8 +768,44 @@ def _normalize_market_prices(
 def _market_prices_from_fills(fills: list[Any]) -> dict[str, list[tuple[datetime, float]]]:
     market_prices: dict[str, list[tuple[datetime, float]]] = {}
     for fill in fills:
-        market_prices.setdefault(fill.market_id, []).append((fill.timestamp, float(fill.price)))
+        market_prices.setdefault(str(fill.market_id), []).append((fill.timestamp, float(fill.price)))
     return market_prices
+
+
+def _merge_market_price_sources(
+    primary: Mapping[str, Sequence[tuple[Any, float]]] | None,
+    secondary: Mapping[str, Sequence[tuple[Any, float]]] | None,
+) -> dict[str, list[tuple[datetime, float]]]:
+    """
+    Merge two market-price maps and normalize timestamps/prices.
+
+    When fills are overlaid on the YES-price panel, this keeps fill timestamps
+    present in the plotted market series so marker x/y coordinates align with
+    the rendered line.
+    """
+    merged: dict[str, list[tuple[Any, float]]] = {}
+
+    for source in (primary, secondary):
+        if not source:
+            continue
+        for market_id, points in source.items():
+            if not points:
+                continue
+            merged.setdefault(str(market_id), []).extend(points)
+
+    return _normalize_market_prices(merged)
+
+
+def _market_prices_with_fill_points(
+    market_prices: Mapping[str, Sequence[tuple[Any, float]]] | None,
+    fills: list[Any],
+) -> dict[str, list[tuple[datetime, float]]]:
+    normalized_market_prices = _normalize_market_prices(market_prices)
+    fill_prices = _market_prices_from_fills(fills)
+    if not normalized_market_prices:
+        return fill_prices
+
+    return _merge_market_price_sources(normalized_market_prices, fill_prices)
 
 
 def _build_metrics(snapshots: list[Any], initial_cash: float) -> dict[str, float]:
@@ -1312,15 +1362,14 @@ def create_legacy_backtest_chart(
     """
     repo_path = resolve_legacy_plot_repo(legacy_repo_path)
     models_module, plotting_module = _load_legacy_modules(repo_path)
+    _disable_legacy_downsampling(plotting_module)
 
     account_report = _extract_account_report(engine)
     fills_report = engine.trader.generate_order_fills_report()
 
     fills = _convert_fills(fills_report, models_module)
     sparse_snapshots = _build_portfolio_snapshots(models_module, account_report, fills)
-    normalized_market_prices = _normalize_market_prices(market_prices)
-    if not normalized_market_prices:
-        normalized_market_prices = _market_prices_from_fills(fills)
+    normalized_market_prices = _market_prices_with_fill_points(market_prices, fills)
 
     snapshots = _build_dense_portfolio_snapshots(
         models_module=models_module,

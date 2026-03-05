@@ -27,6 +27,7 @@ Data sources:
 """
 
 import asyncio
+import os
 from decimal import Decimal
 
 import pandas as pd
@@ -50,7 +51,10 @@ from nautilus_trader.model.objects import Money
 #   python nautilus_trader/adapters/polymarket/scripts/active_markets.py
 # To find BTC/ETH UpDown markets specifically, run:
 #   python nautilus_trader/adapters/polymarket/scripts/list_updown_markets.py
-MARKET_SLUG = "gta-vi-released-before-june-2026"
+MARKET_SLUG = os.getenv(
+    "MARKET_SLUG",
+    "will-gavin-newsom-win-the-2028-democratic-presidential-nomination-568",
+)
 
 # ── Strategy metadata (shown in the menu) ────────────────────────────────────
 NAME = "polymarket_simple_quoter"
@@ -95,7 +99,7 @@ async def run_backtest(
         oms_type=OmsType.NETTING,
         account_type=AccountType.CASH,
         base_currency=USDC_POS,
-        starting_balances=[Money(10_000, USDC_POS)],
+        starting_balances=[Money(100, USDC_POS)],
     )
 
     # Add instrument and data

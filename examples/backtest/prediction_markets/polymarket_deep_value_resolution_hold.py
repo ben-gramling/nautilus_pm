@@ -1,29 +1,24 @@
 """
-Deep-value Polymarket strategy: buy low-priced outcomes and hold to resolution.
+Deep-value Polymarket strategy: buy low-priced outcomes and hold.
 
-This script finds recent high-volume closed markets with CLOB trade history,
-selects an outcome token that traded <= $0.20 and later resolved near 1.0,
-runs a simple buy-and-hold strategy, and renders legacy Bokeh charts with
-cumulative Brier advantage.
+Runs on a single configured Polymarket market slug and renders a legacy chart
+for side-by-side strategy comparison.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+from datetime import UTC
+from datetime import datetime
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
-import msgspec
 import pandas as pd
 
 from nautilus_trader.adapters.polymarket import POLYMARKET_VENUE
 from nautilus_trader.adapters.polymarket import PolymarketDataLoader
-from nautilus_trader.adapters.polymarket.common.gamma_markets import list_markets
-from nautilus_trader.adapters.polymarket.common.gamma_markets import (
-    normalize_gamma_market_to_clob_format,
-)
-from nautilus_trader.adapters.polymarket.common.parsing import parse_polymarket_instrument
 from nautilus_trader.adapters.polymarket.fee_model import PolymarketFeeModel
 from nautilus_trader.adapters.prediction_market.backtest_utils import build_market_prices
 from nautilus_trader.adapters.prediction_market.backtest_utils import extract_price_points
@@ -32,7 +27,6 @@ from nautilus_trader.analysis.legacy_plot_adapter import create_legacy_backtest_
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.config import LoggingConfig
-from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.model.currencies import USDC_POS
 from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.enums import AccountType
@@ -48,20 +42,20 @@ from nautilus_trader.trading.strategy import StrategyConfig
 
 
 NAME = "polymarket_deep_value_resolution_hold"
-DESCRIPTION = "Buy low-priced outcome tokens <= 20c and hold to resolution"
+DESCRIPTION = "Buy below a configurable threshold and hold (single market)"
 
-MAX_MARKETS = int(os.getenv("MAX_MARKETS", "3"))
-CANDIDATE_LIMIT = int(os.getenv("CANDIDATE_LIMIT", "500"))
+MARKET_SLUG = os.getenv(
+    "MARKET_SLUG",
+    "will-gavin-newsom-win-the-2028-democratic-presidential-nomination-568",
+)
+LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "30"))
 MIN_TRADES = int(os.getenv("MIN_TRADES", "200"))
-MIN_VOLUME_NUM = float(os.getenv("MIN_VOLUME_NUM", "20000"))
-START_DATE_MIN = os.getenv("START_DATE_MIN", "2024-01-01T00:00:00Z")
+CHART_RESAMPLE_RULE = os.getenv("CHART_RESAMPLE_RULE")
 
-ENTRY_PRICE_MAX = float(os.getenv("ENTRY_PRICE_MAX", "0.20"))
-RESOLUTION_PRICE_MIN = float(os.getenv("RESOLUTION_PRICE_MIN", "0.95"))
-WIN_LAST_PRICE_MIN = float(os.getenv("WIN_LAST_PRICE_MIN", "0.90"))
+ENTRY_PRICE_MAX = float(os.getenv("ENTRY_PRICE_MAX", "0.247"))
 
-TRADE_SIZE = Decimal(os.getenv("TRADE_SIZE", "20"))
-INITIAL_CASH = float(os.getenv("INITIAL_CASH", "1000"))
+TRADE_SIZE = Decimal(os.getenv("TRADE_SIZE", "100"))
+INITIAL_CASH = float(os.getenv("INITIAL_CASH", "100"))
 
 
 class DeepValueHoldConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
@@ -138,58 +132,6 @@ class DeepValueHold(Strategy):
         )
         self.submit_order(order)
         self._pending = True
-
-
-def _parse_json_list(value: Any) -> list[Any]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    if isinstance(value, str | bytes):
-        try:
-            decoded = msgspec.json.decode(value)
-            return decoded if isinstance(decoded, list) else []
-        except Exception:
-            return []
-    return []
-
-
-def _extract_outcome_tokens(gamma_market: dict[str, Any]) -> list[tuple[str, str]]:
-    outcomes = _parse_json_list(gamma_market.get("outcomes"))
-    token_ids = _parse_json_list(gamma_market.get("clobTokenIds"))
-    if not token_ids:
-        return []
-
-    pairs: list[tuple[str, str]] = []
-    for idx, token_id in enumerate(token_ids):
-        outcome = str(outcomes[idx]) if idx < len(outcomes) else f"OUTCOME_{idx + 1}"
-        pairs.append((outcome, str(token_id)))
-    return pairs
-
-
-def _build_loader_from_gamma_market(
-    gamma_market: dict[str, Any],
-    token_id: str,
-    outcome: str,
-    http_client: nautilus_pyo3.HttpClient,
-) -> PolymarketDataLoader | None:
-    normalized = normalize_gamma_market_to_clob_format(gamma_market)
-    condition_id = normalized.get("condition_id")
-    if not condition_id:
-        return None
-
-    instrument = parse_polymarket_instrument(
-        market_info=normalized,
-        token_id=token_id,
-        outcome=outcome,
-    )
-
-    return PolymarketDataLoader(
-        instrument=instrument,
-        token_id=token_id,
-        condition_id=str(condition_id),
-        http_client=http_client,
-    )
 
 
 def _build_probability_frame(
@@ -285,7 +227,12 @@ def _run_backtest(
         strategy_name=f"{NAME}:{slug}:{outcome}",
         platform="polymarket",
         initial_cash=INITIAL_CASH,
-        market_prices={str(instrument.id): build_market_prices(price_points)},
+        market_prices={
+            str(instrument.id): build_market_prices(
+                price_points,
+                resample_rule=CHART_RESAMPLE_RULE or None,
+            )
+        },
         user_probabilities=prob_frame.get("user_probability"),
         market_probabilities=prob_frame.get("market_probability"),
         outcomes=prob_frame.get("outcome"),
@@ -300,6 +247,7 @@ def _run_backtest(
     return {
         "slug": slug,
         "outcome": outcome,
+        "output_path": output_path,
         "trades": len(trades),
         "fills": len(fills),
         "pnl": pnl,
@@ -340,178 +288,37 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
     print(sep)
 
 
-def _get_price_stats(trades: list[TradeTick]) -> tuple[float, float, float]:
-    prices = [float(t.price) for t in trades]
-    return (min(prices), max(prices), prices[-1])
-
-
-async def _evaluate_outcome_candidate(
-    market: dict[str, Any],
-    outcome: str,
-    token_id: str,
-    client: nautilus_pyo3.HttpClient,
-) -> dict[str, Any] | None:
-    loader = _build_loader_from_gamma_market(
-        gamma_market=market,
-        token_id=token_id,
-        outcome=outcome,
-        http_client=client,
-    )
-    if loader is None:
-        return None
-
-    try:
-        trades = await loader.load_trades()
-    except Exception:
-        return None
-
-    if len(trades) < MIN_TRADES:
-        return None
-
-    min_price, max_price, last_price = _get_price_stats(trades)
-    if min_price > ENTRY_PRICE_MAX:
-        return None
-    if max_price < RESOLUTION_PRICE_MIN:
-        return None
-    if last_price < WIN_LAST_PRICE_MIN:
-        return None
-
-    return {
-        "loader": loader,
-        "trades": trades,
-        "outcome": outcome,
-        "min_price": min_price,
-        "max_price": max_price,
-        "last_price": last_price,
-    }
-
-
-def _market_filters() -> dict[str, Any]:
-    filters: dict[str, Any] = {"closed": True, "archived": False, "limit": CANDIDATE_LIMIT}
-    if START_DATE_MIN:
-        filters["start_date_min"] = START_DATE_MIN
-    return filters
-
-
-async def _select_market_candidate(
-    market: dict[str, Any],
-    client: nautilus_pyo3.HttpClient,
-    volume_fn,
-) -> dict[str, Any] | None:
-    slug = str(market.get("slug", ""))
-    if not slug:
-        return None
-
-    volume_num = volume_fn(market.get("volumeNum"))
-    if volume_num < MIN_VOLUME_NUM:
-        return None
-
-    outcome_tokens = _extract_outcome_tokens(market)
-    if not outcome_tokens:
-        return None
-
-    best_match: dict[str, Any] | None = None
-    for outcome, token_id in outcome_tokens:
-        candidate = await _evaluate_outcome_candidate(
-            market=market,
-            outcome=outcome,
-            token_id=token_id,
-            client=client,
-        )
-        if candidate is None:
-            continue
-        if best_match is None or float(candidate["last_price"]) > float(best_match["last_price"]):
-            best_match = candidate
-
-    if best_match is None:
-        return None
-
-    return {
-        "slug": slug,
-        "loader": best_match["loader"],
-        "trades": best_match["trades"],
-        "outcome": best_match["outcome"],
-        "volume_num": volume_num,
-        "min_price": best_match["min_price"],
-        "max_price": best_match["max_price"],
-        "last_price": best_match["last_price"],
-    }
-
-
-async def _discover_candidates(
-    client: nautilus_pyo3.HttpClient,
-) -> tuple[list[dict[str, Any]], int]:
-    def _volume(value: Any) -> float:
-        try:
-            return float(value or 0.0)
-        except (TypeError, ValueError):
-            return 0.0
-
-    raw_markets = await list_markets(
-        http_client=client,
-        filters=_market_filters(),
-        max_results=CANDIDATE_LIMIT,
-    )
-    ranked = sorted(
-        raw_markets,
-        key=lambda m: _volume(m.get("volumeNum")),
-        reverse=True,
-    )
-    selected: list[dict[str, Any]] = []
-    checked = 0
-
-    for market in ranked:
-        if len(selected) >= MAX_MARKETS:
-            break
-
-        checked += 1
-        candidate = await _select_market_candidate(market=market, client=client, volume_fn=_volume)
-        if candidate is None:
-            continue
-
-        selected.append(candidate)
-
-        print(
-            f"  selected {candidate['slug']}:{candidate['outcome']} | "
-            f"volume={candidate['volume_num']:.0f} trades={len(candidate['trades'])} "
-            f"min={candidate['min_price']:.3f} max={candidate['max_price']:.3f} "
-            f"last={candidate['last_price']:.3f}"
-        )
-
-    return selected, checked
-
-
 async def run() -> None:
-    client = nautilus_pyo3.HttpClient(
-        default_quota=nautilus_pyo3.Quota.rate_per_second(10),
-    )
+    now = datetime.now(UTC)
+    start = pd.Timestamp(now - timedelta(days=LOOKBACK_DAYS))
+    end = pd.Timestamp(now)
 
     print(
-        f"Discovering up to {MAX_MARKETS} high-volume closed markets "
-        f"(entry <= {ENTRY_PRICE_MAX:.2f}, final >= {WIN_LAST_PRICE_MIN:.2f}, "
-        f"since {START_DATE_MIN})..."
+        f"Loading Polymarket market {MARKET_SLUG} "
+        f"(lookback={LOOKBACK_DAYS}d)..."
     )
-    selected, checked = await _discover_candidates(client)
-
-    if not selected:
-        print(f"Checked {checked} markets; found no qualifying candidates.")
+    try:
+        loader = await PolymarketDataLoader.from_market_slug(MARKET_SLUG)
+        trades = await loader.load_trades(start, end)
+    except Exception as exc:
+        print(f"Unable to load {MARKET_SLUG}: {exc}")
         return
 
-    results: list[dict[str, Any]] = []
-    for candidate in selected:
-        slug = str(candidate["slug"])
-        outcome = str(candidate["outcome"])
-        print(f"  running backtest for {slug}:{outcome}...")
-        result = _run_backtest(
-            slug=slug,
-            outcome=outcome,
-            loader=candidate["loader"],
-            trades=candidate["trades"],
-        )
-        results.append(result)
+    if len(trades) < MIN_TRADES:
+        print(f"Skip {MARKET_SLUG}: {len(trades)} trades < {MIN_TRADES} required")
+        return
 
-    _print_summary(results)
-    print(f"\nLegacy charts saved to output/{NAME}_<slug>_<outcome>_legacy.html")
+    outcome = str(getattr(loader.instrument, "outcome", "yes"))
+    print(f"  running backtest for {MARKET_SLUG}:{outcome}...")
+    result = _run_backtest(
+        slug=MARKET_SLUG,
+        outcome=outcome,
+        loader=loader,
+        trades=trades,
+    )
+
+    _print_summary([result])
+    print(f"\nLegacy chart saved to {result['output_path']}")
 
 
 if __name__ == "__main__":

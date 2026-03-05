@@ -175,9 +175,21 @@ def build_brier_inputs(
     )
 
 
-def build_market_prices(points: Sequence[PricePoint]) -> list[tuple[datetime, float]]:
+def build_market_prices(
+    points: Sequence[PricePoint],
+    *,
+    resample_rule: str | None = None,
+) -> list[tuple[datetime, float]]:
     """
     Convert ``(timestamp, price)`` pairs into sorted chart points.
+
+    Parameters
+    ----------
+    points : Sequence[PricePoint]
+        Raw ``(timestamp, price)`` records.
+    resample_rule : str, optional
+        Optional pandas offset alias used to resample for chart readability
+        (for example ``"5min"``). The last price in each bucket is kept.
     """
     output: list[tuple[datetime, float]] = []
     for ts_raw, price in points:
@@ -191,5 +203,12 @@ def build_market_prices(points: Sequence[PricePoint]) -> list[tuple[datetime, fl
 
     frame = pd.DataFrame(output, columns=["ts", "price"]).sort_values("ts")
     frame = frame.drop_duplicates(subset=["ts"], keep="last")
+    if resample_rule:
+        frame = (
+            frame.set_index("ts")
+            .resample(resample_rule)
+            .last()
+            .dropna()
+            .reset_index()
+        )
     return [(row.ts.to_pydatetime(), float(row.price)) for row in frame.itertuples(index=False)]
-
