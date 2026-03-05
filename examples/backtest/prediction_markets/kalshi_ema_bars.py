@@ -66,6 +66,12 @@ except ModuleNotFoundError:
 NAME = "kalshi_ema_bars"
 DESCRIPTION = "Fetch Kalshi bars to catalog, then run EMA-cross backtest"
 
+BAR_INTERVAL_TO_SPEC = {
+    "Minutes1": "1-MINUTE-LAST",
+    "Hours1": "1-HOUR-LAST",
+    "Days1": "1-DAY-LAST",
+}
+
 # ---------------------------------------------------------------------------
 # Configure these constants for your backtest
 # ---------------------------------------------------------------------------
@@ -82,6 +88,15 @@ END = os.getenv("END", _NOW_UTC.strftime("%Y-%m-%d"))
 FAST_EMA = 10
 SLOW_EMA = 20
 TRADE_SIZE = Decimal("1")          # Number of contracts per trade  # noqa: FURB157
+
+
+def _bar_spec_for_interval(interval: str) -> str:
+    try:
+        return BAR_INTERVAL_TO_SPEC[interval]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported BAR_INTERVAL {interval!r}. Expected one of {tuple(BAR_INTERVAL_TO_SPEC)}",
+        ) from exc
 
 
 async def fetch_and_catalog() -> None:
@@ -105,9 +120,8 @@ async def fetch_and_catalog() -> None:
 def run_backtest() -> None:
     """Phase 2 - run EMA-cross backtest against the catalog data."""
     instrument_id = f"{MARKET_TICKER}.KALSHI"
-    # NOTE: bar_type must match the interval written by fetch_and_catalog().
-    # If BAR_INTERVAL changes, update "1-HOUR-LAST" here accordingly.
-    bar_type = f"{instrument_id}-1-HOUR-LAST-EXTERNAL"
+    bar_spec = _bar_spec_for_interval(BAR_INTERVAL)
+    bar_type = f"{instrument_id}-{bar_spec}-EXTERNAL"
 
     venue_config = BacktestVenueConfig(
         name="KALSHI",
@@ -121,7 +135,7 @@ def run_backtest() -> None:
         catalog_path=CATALOG_PATH,
         data_cls=Bar,
         instrument_id=instrument_id,
-        bar_spec="1-HOUR-LAST",
+        bar_spec=bar_spec,
         start_time=START,
         end_time=END,
     )

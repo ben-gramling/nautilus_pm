@@ -34,11 +34,11 @@ from nautilus_trader.model.objects import Price
 from nautilus_trader.model.objects import Quantity
 
 
-def make_instrument() -> BinaryOption:
+def make_instrument(ticker: str = "KXBTC-25MAR15-B100000") -> BinaryOption:
     """Return a minimal BinaryOption for testing."""
     return BinaryOption(
-        instrument_id=InstrumentId(Symbol("KXBTC-25MAR15-B100000"), Venue("KALSHI")),
-        raw_symbol=Symbol("KXBTC-25MAR15-B100000"),
+        instrument_id=InstrumentId(Symbol(ticker), Venue("KALSHI")),
+        raw_symbol=Symbol(ticker),
         asset_class=AssetClass.ALTERNATIVE,
         currency=Currency.from_str("USD"),
         activation_ns=0,
@@ -124,6 +124,37 @@ def make_trade_dict(
     }
 
 
+def make_trade_dict_v2(
+    created_time: str = "2026-03-05T19:39:35.459340Z",
+    yes_price_dollars: str = "0.4200",
+    count_fp: str = "10.00",
+    taker_side: str = "yes",
+    trade_id: str = "7aecfcc5-3df3-6ad6-df55-4cc92e61f6dd",
+) -> dict:
+    return {
+        "created_time": created_time,
+        "yes_price": int(float(yes_price_dollars) * 100),
+        "yes_price_dollars": yes_price_dollars,
+        "no_price": 100 - int(float(yes_price_dollars) * 100),
+        "no_price_dollars": f"{1 - float(yes_price_dollars):.4f}",
+        "count": int(float(count_fp)),
+        "count_fp": count_fp,
+        "price": float(yes_price_dollars),
+        "taker_side": taker_side,
+        "ticker": "KXBTC-25MAR15-B100000",
+        "trade_id": trade_id,
+    }
+
+
+def test_normalize_price_handles_decimal_and_cent_boundaries():
+    assert KalshiDataLoader._normalize_price(42) == pytest.approx(0.42)
+    assert KalshiDataLoader._normalize_price("42") == pytest.approx(0.42)
+    assert KalshiDataLoader._normalize_price(1) == pytest.approx(0.01)
+    assert KalshiDataLoader._normalize_price("1") == pytest.approx(0.01)
+    assert KalshiDataLoader._normalize_price(1.0) == pytest.approx(1.0)
+    assert KalshiDataLoader._normalize_price("1.0") == pytest.approx(1.0)
+
+
 @pytest.mark.asyncio
 async def test_from_market_ticker_returns_loader():
     ticker = "KXBTC-25MAR15-B100000"
@@ -175,6 +206,8 @@ async def test_fetch_trades_single_page():
     assert len(trades) == 1
     assert trades[0]["ts"] == 1700000000
     mock_client.get.assert_called_once()
+    assert mock_client.get.call_args.kwargs["url"].endswith("/markets/trades")
+    assert mock_client.get.call_args.kwargs["params"]["ticker"] == instrument.id.symbol.value
 
 
 @pytest.mark.asyncio
@@ -208,6 +241,37 @@ def test_parse_trades_returns_trade_ticks():
     assert ticks[1].aggressor_side == AggressorSide.SELLER
     # Timestamp: 1700000000 seconds → nanoseconds
     assert ticks[0].ts_event == 1700000000 * 1_000_000_000
+
+
+def test_parse_trades_prefers_current_kalshi_payload_fields():
+    instrument = make_instrument()
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=MagicMock())
+
+    tick = loader.parse_trades([make_trade_dict_v2()])[0]
+
+    assert str(tick.trade_id) == "7aecfcc5-3df3-6ad6-df55-4cc92e61f6dd"
+    assert str(tick.price) == "0.4200"
+    assert str(tick.size) == "10.00"
+    assert tick.ts_event == pd.Timestamp("2026-03-05T19:39:35.459340Z").value
+
+
+def test_parse_trades_generates_unique_ids_without_trade_id():
+    ticker = "KXNEXTIRANLEADER-45JAN01-MKHA-LONGSUFFIX"
+    instrument = make_instrument(ticker=ticker)
+    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXNEXTIRANLEADER", http_client=MagicMock())
+
+    raw = [
+        make_trade_dict(ts=1700000000, yes_price="0.4200", count="10.00"),
+        make_trade_dict(ts=1700000000, yes_price="0.4300", count="10.00"),
+        make_trade_dict(ts=1700000000, yes_price="0.4200", count="10.00"),
+    ]
+    for trade in raw:
+        trade.pop("trade_id", None)
+
+    ticks = loader.parse_trades(raw)
+
+    assert len({str(tick.trade_id) for tick in ticks}) == 3
+    assert all(len(str(tick.trade_id)) <= 36 for tick in ticks)
 
 
 def test_parse_trades_unknown_side_gives_no_aggressor():
@@ -249,9 +313,9 @@ async def test_load_trades_sorted_chronologically():
     instrument = make_instrument()
     mock_client = MagicMock()
     raw = [
-        make_trade_dict(ts=3000),
-        make_trade_dict(ts=1000),
-        make_trade_dict(ts=2000),
+        make_trade_dict_v2(created_time="2026-03-05T19:39:37Z", trade_id="trade-3"),
+        make_trade_dict_v2(created_time="2026-03-05T19:39:35Z", trade_id="trade-1"),
+        make_trade_dict_v2(created_time="2026-03-05T19:39:36Z", trade_id="trade-2"),
     ]
     mock_client.get = AsyncMock(return_value=make_mock_response({"trades": raw, "cursor": ""}))
     loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=mock_client)

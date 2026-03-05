@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from collections.abc import Sequence
 from datetime import datetime
 
@@ -141,9 +142,45 @@ def _probability_frame(points: Sequence[PricePoint]) -> pd.DataFrame:
     return frame
 
 
+def infer_realized_outcome(source: object | None) -> float | None:
+    """
+    Infer a realized binary outcome from instrument metadata when available.
+    """
+    if source is None:
+        return None
+
+    info = getattr(source, "info", source)
+    if not isinstance(info, Mapping):
+        return None
+
+    if info.get("is_50_50_outcome") is True:
+        return 0.5
+
+    tokens = info.get("tokens")
+    if not isinstance(tokens, Sequence):
+        return None
+
+    outcome_name = str(getattr(source, "outcome", "")).strip().casefold()
+    if not outcome_name:
+        return None
+
+    for token in tokens:
+        if not isinstance(token, Mapping):
+            continue
+        token_outcome = str(token.get("outcome", "")).strip().casefold()
+        if token_outcome != outcome_name:
+            continue
+        winner = token.get("winner")
+        if isinstance(winner, bool):
+            return float(winner)
+
+    return None
+
+
 def build_brier_inputs(
     points: Sequence[PricePoint],
     window: int,
+    realized_outcome: float | None = None,
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
     """
     Build user/market/outcome probability series for cumulative Brier advantage.
@@ -162,12 +199,18 @@ def build_brier_inputs(
         .mean()
         .clip(0.0, 1.0)
     )
-    frame["outcome"] = float(frame["market_probability"].iloc[-1] >= 0.5)
-
-    frame = frame.dropna(subset=["user_probability", "market_probability", "outcome"])
+    frame = frame.dropna(subset=["user_probability", "market_probability"])
     if frame.empty:
         return empty, empty, empty
 
+    if realized_outcome is None:
+        return (
+            frame["user_probability"].copy(),
+            frame["market_probability"].copy(),
+            empty,
+        )
+
+    frame["outcome"] = float(realized_outcome)
     return (
         frame["user_probability"].copy(),
         frame["market_probability"].copy(),

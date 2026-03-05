@@ -22,6 +22,7 @@ from nautilus_trader.adapters.prediction_market.backtest_utils import build_brie
 from nautilus_trader.adapters.prediction_market.backtest_utils import build_market_prices
 from nautilus_trader.adapters.prediction_market.backtest_utils import extract_price_points
 from nautilus_trader.adapters.prediction_market.backtest_utils import extract_realized_pnl
+from nautilus_trader.adapters.prediction_market.backtest_utils import infer_realized_outcome
 from nautilus_trader.analysis.legacy_plot_adapter import create_legacy_backtest_chart
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
@@ -86,6 +87,7 @@ def run_market_backtest(
     user_probabilities, market_probabilities, outcomes = build_brier_inputs(
         points=price_points,
         window=probability_window,
+        realized_outcome=infer_realized_outcome(instrument),
     )
 
     chart_path = f"output/{output_prefix}_{market_id}_legacy.html"

@@ -32,7 +32,7 @@ Use these scripts to compare strategies on shared markets:
 
 - Kalshi default market: `KXNEXTIRANLEADER-45JAN01-MKHA`
 - Polymarket default market:
-  `will-gavin-newsom-win-the-2028-democratic-presidential-nomination-568`
+  `will-openai-launch-a-new-consumer-hardware-product-by-march-31-2026`
 
 Kalshi:
 
@@ -56,8 +56,8 @@ Default chart readability settings for this comparison set:
 
 - Kalshi and Polymarket chart prices are full-density by default (no resample).
 - Set `CHART_RESAMPLE_RULE` if you want smoother chart lines for debugging.
-- Polymarket strategy defaults are calibrated for the Newsom nominee market range so
-  charts produce non-flat equity/PnL/allocation by default.
+- Polymarket defaults use a lower-activity public market so the public trades API
+  stays within its historical offset ceiling while still producing non-flat charts.
 
 ## Conventions
 

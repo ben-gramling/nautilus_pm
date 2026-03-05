@@ -25,6 +25,7 @@ from nautilus_trader.adapters.polymarket.fee_model import PolymarketFeeModel
 from nautilus_trader.adapters.prediction_market.backtest_utils import build_market_prices
 from nautilus_trader.adapters.prediction_market.backtest_utils import extract_price_points
 from nautilus_trader.adapters.prediction_market.backtest_utils import extract_realized_pnl
+from nautilus_trader.adapters.prediction_market.backtest_utils import infer_realized_outcome
 from nautilus_trader.analysis.legacy_plot_adapter import create_legacy_backtest_chart
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
@@ -77,6 +78,7 @@ INITIAL_CASH = float(os.getenv("INITIAL_CASH", str(DEFAULT_INITIAL_CASH)))
 def _build_probability_frame(
     trades: list[TradeTick],
     entry_price_max: float,
+    realized_outcome: float | None,
 ) -> pd.DataFrame:
     rows: list[tuple[pd.Timestamp, float]] = []
     for tick in trades:
@@ -101,8 +103,9 @@ def _build_probability_frame(
         user_probability = frame["market_probability"].copy()
 
     frame["user_probability"] = user_probability
-    frame["outcome"] = 1.0
-    frame = frame.dropna(subset=["user_probability", "market_probability", "outcome"])
+    frame = frame.dropna(subset=["user_probability", "market_probability"])
+    if realized_outcome is not None:
+        frame["outcome"] = float(realized_outcome)
 
     return frame
 
@@ -155,7 +158,11 @@ def _run_backtest(
     positions = engine.trader.generate_positions_report()
     pnl = extract_realized_pnl(positions)
 
-    prob_frame = _build_probability_frame(trades=trades, entry_price_max=ENTRY_PRICE_MAX)
+    prob_frame = _build_probability_frame(
+        trades=trades,
+        entry_price_max=ENTRY_PRICE_MAX,
+        realized_outcome=infer_realized_outcome(instrument),
+    )
     price_points = extract_price_points(trades, price_attr="price")
 
     safe_outcome = _slugify(outcome) or "outcome"

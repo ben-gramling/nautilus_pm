@@ -59,6 +59,8 @@ class PolymarketDataLoader:
 
     """
 
+    _TRADES_PAGE_LIMIT = 1_000
+
     def __init__(
         self,
         instrument: BinaryOption,
@@ -688,7 +690,7 @@ class PolymarketDataLoader:
     async def fetch_trades(
         self,
         condition_id: str,
-        limit: int = 10_000,
+        limit: int = _TRADES_PAGE_LIMIT,
     ) -> list[dict[str, Any]]:
         """
         Fetch trades from the Polymarket Data API.
@@ -697,8 +699,8 @@ class PolymarketDataLoader:
         ----------
         condition_id : str
             The market condition ID.
-        limit : int, default 10_000
-            Number of trades per request (max 10,000).
+        limit : int, default 1,000
+            Number of trades per request. The public API currently caps this at 1,000.
 
         Returns
         -------
@@ -708,15 +710,15 @@ class PolymarketDataLoader:
         Notes
         -----
         This method automatically handles pagination using offset-based requests.
-        The API caps offset at 10,000, so a maximum of ~20,000 trades can be
-        fetched per condition.
+        It keeps paging until the API returns fewer than the requested page size
+        or an empty page.
 
         """
         PyCondition.valid_string(condition_id, "condition_id")
 
         all_trades: list[dict[str, Any]] = []
         offset = 0
-        page_limit = min(limit, 10_000)
+        page_limit = min(limit, self._TRADES_PAGE_LIMIT)
 
         while True:
             params: dict[str, Any] = {
@@ -731,9 +733,16 @@ class PolymarketDataLoader:
             )
 
             if response.status != 200:
+                body_text = response.body.decode("utf-8")
+                if "max historical activity offset" in body_text:
+                    raise RuntimeError(
+                        "Polymarket public trades API hit its historical offset ceiling. "
+                        "Use a lower-activity market or another historical data source. "
+                        f"API response: {body_text}",
+                    )
                 raise RuntimeError(
                     f"HTTP request failed with status {response.status}: "
-                    f"{response.body.decode('utf-8')}",
+                    f"{body_text}",
                 )
 
             data = msgspec.json.decode(response.body)
@@ -744,7 +753,7 @@ class PolymarketDataLoader:
             all_trades.extend(data)
             offset += len(data)
 
-            if len(data) < page_limit or offset > 10_000:
+            if len(data) < page_limit:
                 break
 
         return all_trades

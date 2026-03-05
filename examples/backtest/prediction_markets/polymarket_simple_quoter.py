@@ -36,6 +36,7 @@ import pandas as pd
 
 from nautilus_trader.adapters.polymarket import POLYMARKET_VENUE
 from nautilus_trader.adapters.polymarket import PolymarketDataLoader
+from nautilus_trader.adapters.polymarket.fee_model import PolymarketFeeModel
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.examples.strategies.ema_cross_long_only import EMACrossLongOnly
@@ -113,6 +114,7 @@ async def run_backtest(
         account_type=AccountType.CASH,
         base_currency=USDC_POS,
         starting_balances=[Money(DEFAULT_INITIAL_CASH, USDC_POS)],
+        fee_model=PolymarketFeeModel(),
     )
 
     # Add instrument and data
