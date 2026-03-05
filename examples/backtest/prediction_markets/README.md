@@ -63,4 +63,5 @@ Default chart readability settings for this comparison set:
 
 - Keep venue-specific data access in adapter research modules.
 - Keep strategy classes in the shared prediction-market strategy package.
+- Keep shared single-market defaults in `_defaults.py` and import them from scripts.
 - Avoid helper duplication across scripts; prefer shared utilities.

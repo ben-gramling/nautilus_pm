@@ -28,7 +28,9 @@ Data sources:
 
 import asyncio
 import os
+import sys
 from decimal import Decimal
+from pathlib import Path
 
 import pandas as pd
 
@@ -46,6 +48,17 @@ from nautilus_trader.model.identifiers import TraderId
 from nautilus_trader.model.objects import Money
 
 
+try:
+    from _defaults import DEFAULT_INITIAL_CASH
+    from _defaults import DEFAULT_POLYMARKET_MARKET_SLUG
+except ModuleNotFoundError:
+    _THIS_DIR = Path(__file__).resolve().parent
+    if str(_THIS_DIR) not in sys.path:
+        sys.path.insert(0, str(_THIS_DIR))
+    from _defaults import DEFAULT_INITIAL_CASH
+    from _defaults import DEFAULT_POLYMARKET_MARKET_SLUG
+
+
 # Market slug to fetch data for
 # To find active markets, run:
 #   python nautilus_trader/adapters/polymarket/scripts/active_markets.py
@@ -53,7 +66,7 @@ from nautilus_trader.model.objects import Money
 #   python nautilus_trader/adapters/polymarket/scripts/list_updown_markets.py
 MARKET_SLUG = os.getenv(
     "MARKET_SLUG",
-    "will-gavin-newsom-win-the-2028-democratic-presidential-nomination-568",
+    DEFAULT_POLYMARKET_MARKET_SLUG,
 )
 
 # ── Strategy metadata (shown in the menu) ────────────────────────────────────
@@ -99,7 +112,7 @@ async def run_backtest(
         oms_type=OmsType.NETTING,
         account_type=AccountType.CASH,
         base_currency=USDC_POS,
-        starting_balances=[Money(100, USDC_POS)],
+        starting_balances=[Money(DEFAULT_INITIAL_CASH, USDC_POS)],
     )
 
     # Add instrument and data

@@ -22,11 +22,17 @@ from nautilus_trader.examples.strategies.prediction_market.mean_reversion import
 
 
 try:
+    from _defaults import DEFAULT_INITIAL_CASH
+    from _defaults import DEFAULT_KALSHI_MARKET_TICKER
+    from _defaults import DEFAULT_LOOKBACK_DAYS
     from _kalshi_single_market_runner import run_single_market_bar_backtest
 except ModuleNotFoundError:
     _THIS_DIR = Path(__file__).resolve().parent
     if str(_THIS_DIR) not in sys.path:
         sys.path.insert(0, str(_THIS_DIR))
+    from _defaults import DEFAULT_INITIAL_CASH
+    from _defaults import DEFAULT_KALSHI_MARKET_TICKER
+    from _defaults import DEFAULT_LOOKBACK_DAYS
     from _kalshi_single_market_runner import run_single_market_bar_backtest
 
 
@@ -35,8 +41,8 @@ NAME = "kalshi_spread_capture"
 DESCRIPTION = "Mean-reversion spread capture on a single Kalshi market"
 
 # ── Configure here ────────────────────────────────────────────────────────────
-MARKET_TICKER = os.getenv("MARKET_TICKER", "KXNEXTIRANLEADER-45JAN01-MKHA").upper()
-LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "30"))
+MARKET_TICKER = os.getenv("MARKET_TICKER", DEFAULT_KALSHI_MARKET_TICKER).upper()
+LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", str(DEFAULT_LOOKBACK_DAYS)))
 BAR_INTERVAL = os.getenv("BAR_INTERVAL", "Minutes1")
 MIN_BARS = int(os.getenv("MIN_BARS", "1000"))
 MIN_PRICE_RANGE = float(os.getenv("MIN_PRICE_RANGE", "0.03"))
@@ -46,7 +52,7 @@ ENTRY_THRESHOLD = 0.01  # enter when close is 1¢ below rolling average (0-1 sca
 TAKE_PROFIT = 0.01  # exit when price recovers 1¢ above fill price
 STOP_LOSS = 0.03  # stop out 3¢ below fill price
 TRADE_SIZE = Decimal(1)
-INITIAL_CASH = 100.0
+INITIAL_CASH = float(os.getenv("INITIAL_CASH", str(DEFAULT_INITIAL_CASH)))
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def run() -> None:

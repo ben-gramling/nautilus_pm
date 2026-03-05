@@ -22,6 +22,7 @@ from nautilus_trader.examples.strategies.prediction_market import BarMeanReversi
 from nautilus_trader.examples.strategies.prediction_market import BarPanicFadeConfig
 from nautilus_trader.examples.strategies.prediction_market import BarRSIReversionConfig
 from nautilus_trader.examples.strategies.prediction_market import TradeTickBreakoutConfig
+from nautilus_trader.examples.strategies.prediction_market import TradeTickDeepValueHoldConfig
 from nautilus_trader.examples.strategies.prediction_market import TradeTickEMACrossoverConfig
 from nautilus_trader.examples.strategies.prediction_market import TradeTickMeanReversionConfig
 from nautilus_trader.examples.strategies.prediction_market import TradeTickPanicFadeConfig
@@ -69,6 +70,7 @@ def test_bar_prediction_market_configs_construct(config_cls):
         TradeTickMeanReversionConfig,
         TradeTickEMACrossoverConfig,
         TradeTickBreakoutConfig,
+        TradeTickDeepValueHoldConfig,
         TradeTickRSIReversionConfig,
         TradeTickVWAPReversionConfig,
         TradeTickPanicFadeConfig,

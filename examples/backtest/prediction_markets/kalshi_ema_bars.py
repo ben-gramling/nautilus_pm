@@ -29,7 +29,9 @@ range you want to backtest.
 
 import asyncio
 import os
+import sys
 from decimal import Decimal
+from pathlib import Path
 
 import pandas as pd
 
@@ -47,6 +49,19 @@ from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
 
 
+try:
+    from _defaults import DEFAULT_INITIAL_CASH
+    from _defaults import DEFAULT_KALSHI_MARKET_TICKER
+    from _defaults import DEFAULT_LOOKBACK_DAYS
+except ModuleNotFoundError:
+    _THIS_DIR = Path(__file__).resolve().parent
+    if str(_THIS_DIR) not in sys.path:
+        sys.path.insert(0, str(_THIS_DIR))
+    from _defaults import DEFAULT_INITIAL_CASH
+    from _defaults import DEFAULT_KALSHI_MARKET_TICKER
+    from _defaults import DEFAULT_LOOKBACK_DAYS
+
+
 # ── Strategy metadata (shown in the menu) ────────────────────────────────────
 NAME = "kalshi_ema_bars"
 DESCRIPTION = "Fetch Kalshi bars to catalog, then run EMA-cross backtest"
@@ -54,10 +69,10 @@ DESCRIPTION = "Fetch Kalshi bars to catalog, then run EMA-cross backtest"
 # ---------------------------------------------------------------------------
 # Configure these constants for your backtest
 # ---------------------------------------------------------------------------
-MARKET_TICKER = os.getenv("MARKET_TICKER", "KXNEXTIRANLEADER-45JAN01-MKHA").upper()
+MARKET_TICKER = os.getenv("MARKET_TICKER", DEFAULT_KALSHI_MARKET_TICKER).upper()
 BAR_INTERVAL = os.getenv("BAR_INTERVAL", "Hours1")  # Minutes1 | Hours1 | Days1
 CATALOG_PATH = "./kalshi_catalog"  # Local directory for parquet catalog
-LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "30"))
+LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", str(DEFAULT_LOOKBACK_DAYS)))
 _NOW_UTC = pd.Timestamp.now(tz="UTC")
 START = os.getenv(
     "START",
@@ -99,7 +114,7 @@ def run_backtest() -> None:
         oms_type="NETTING",
         account_type="CASH",
         base_currency="USD",
-        starting_balances=["100 USD"],
+        starting_balances=[f"{int(DEFAULT_INITIAL_CASH)} USD"],
     )
 
     data_config = BacktestDataConfig(

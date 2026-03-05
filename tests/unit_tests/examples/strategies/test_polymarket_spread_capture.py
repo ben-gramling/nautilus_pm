@@ -17,15 +17,14 @@
 from __future__ import annotations
 
 import decimal
-import importlib.util
-import sys
 from decimal import Decimal
-from pathlib import Path
 
 from nautilus_trader.adapters.polymarket.fee_model import PolymarketFeeModel
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.backtest.engine import BacktestEngineConfig
 from nautilus_trader.config import LoggingConfig
+from nautilus_trader.examples.strategies.prediction_market import TradeTickMeanReversionConfig
+from nautilus_trader.examples.strategies.prediction_market import TradeTickMeanReversionStrategy
 from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.enums import AccountType
 from nautilus_trader.model.enums import AggressorSide
@@ -42,33 +41,6 @@ from nautilus_trader.model.objects import Money
 from nautilus_trader.model.objects import Price
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.risk.config import RiskEngineConfig
-
-
-# ---------------------------------------------------------------------------
-# Import strategy classes from examples via importlib (repo root is removed
-# from sys.path by the root conftest, so normal imports won't work).
-# ---------------------------------------------------------------------------
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_STRATEGY_FILE = (
-    _REPO_ROOT
-    / "examples"
-    / "backtest"
-    / "prediction_markets"
-    / "polymarket_spread_capture.py"
-)
-
-
-def _load_strategy_module():
-    spec = importlib.util.spec_from_file_location("polymarket_spread_capture", _STRATEGY_FILE)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["polymarket_spread_capture"] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_mod = _load_strategy_module()
-SpreadCapture = _mod.SpreadCapture
-SpreadCaptureConfig = _mod.SpreadCaptureConfig
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +158,7 @@ class TestPolymarketSpreadCapture:
         ticks = _generate_ticks(self.instrument.id, prices)
         engine.add_data(ticks)
 
-        config = SpreadCaptureConfig(
+        config = TradeTickMeanReversionConfig(
             instrument_id=self.instrument.id,
             trade_size=trade_size,
             vwap_window=vwap_window,
@@ -194,7 +166,7 @@ class TestPolymarketSpreadCapture:
             take_profit=take_profit,
             stop_loss=stop_loss,
         )
-        engine.add_strategy(SpreadCapture(config=config))
+        engine.add_strategy(TradeTickMeanReversionStrategy(config=config))
         engine.run()
         return engine
 

@@ -17,15 +17,14 @@
 from __future__ import annotations
 
 import decimal
-import importlib.util
-import sys
 from decimal import Decimal
-from pathlib import Path
 
 from nautilus_trader.adapters.kalshi.fee_model import KalshiProportionalFeeModel
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.backtest.engine import BacktestEngineConfig
 from nautilus_trader.config import LoggingConfig
+from nautilus_trader.examples.strategies.prediction_market import BarMeanReversionConfig
+from nautilus_trader.examples.strategies.prediction_market import BarMeanReversionStrategy
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.data import BarSpecification
@@ -46,33 +45,6 @@ from nautilus_trader.model.objects import Money
 from nautilus_trader.model.objects import Price
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.risk.config import RiskEngineConfig
-
-
-# ---------------------------------------------------------------------------
-# Import strategy classes from examples via importlib (repo root is removed
-# from sys.path by the root conftest, so normal imports won't work).
-# ---------------------------------------------------------------------------
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_STRATEGY_FILE = (
-    _REPO_ROOT
-    / "examples"
-    / "backtest"
-    / "prediction_markets"
-    / "kalshi_spread_capture.py"
-)
-
-
-def _load_strategy_module():
-    spec = importlib.util.spec_from_file_location("kalshi_spread_capture", _STRATEGY_FILE)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["kalshi_spread_capture"] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_mod = _load_strategy_module()
-BarMeanReversion = _mod.BarMeanReversion
-BarMeanReversionConfig = _mod.BarMeanReversionConfig
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +179,7 @@ class TestKalshiBarMeanReversion:
             take_profit=take_profit,
             stop_loss=stop_loss,
         )
-        engine.add_strategy(BarMeanReversion(config=config))
+        engine.add_strategy(BarMeanReversionStrategy(config=config))
         engine.run()
         return engine
 

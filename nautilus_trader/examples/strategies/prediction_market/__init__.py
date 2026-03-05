@@ -20,6 +20,12 @@ from nautilus_trader.examples.strategies.prediction_market.breakout import BarBr
 from nautilus_trader.examples.strategies.prediction_market.breakout import BarBreakoutStrategy
 from nautilus_trader.examples.strategies.prediction_market.breakout import TradeTickBreakoutConfig
 from nautilus_trader.examples.strategies.prediction_market.breakout import TradeTickBreakoutStrategy
+from nautilus_trader.examples.strategies.prediction_market.deep_value import (
+    TradeTickDeepValueHoldConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market.deep_value import (
+    TradeTickDeepValueHoldStrategy,
+)
 from nautilus_trader.examples.strategies.prediction_market.ema_crossover import (
     BarEMACrossoverConfig,
 )
@@ -83,6 +89,8 @@ __all__ = [
     "BarPanicFadeStrategy",
     "BarRSIReversionConfig",
     "BarRSIReversionStrategy",
+    "TradeTickDeepValueHoldConfig",
+    "TradeTickDeepValueHoldStrategy",
     "TradeTickBreakoutConfig",
     "TradeTickBreakoutStrategy",
     "TradeTickEMACrossoverConfig",

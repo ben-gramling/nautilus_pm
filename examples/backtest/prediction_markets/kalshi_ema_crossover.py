@@ -18,19 +18,25 @@ from nautilus_trader.examples.strategies.prediction_market import BarEMACrossove
 
 
 try:
+    from _defaults import DEFAULT_INITIAL_CASH
+    from _defaults import DEFAULT_KALSHI_MARKET_TICKER
+    from _defaults import DEFAULT_LOOKBACK_DAYS
     from _kalshi_single_market_runner import run_single_market_bar_backtest
 except ModuleNotFoundError:
     _THIS_DIR = Path(__file__).resolve().parent
     if str(_THIS_DIR) not in sys.path:
         sys.path.insert(0, str(_THIS_DIR))
+    from _defaults import DEFAULT_INITIAL_CASH
+    from _defaults import DEFAULT_KALSHI_MARKET_TICKER
+    from _defaults import DEFAULT_LOOKBACK_DAYS
     from _kalshi_single_market_runner import run_single_market_bar_backtest
 
 
 NAME = "kalshi_ema_crossover"
 DESCRIPTION = "EMA crossover momentum on a single Kalshi market"
 
-MARKET_TICKER = os.getenv("MARKET_TICKER", "KXNEXTIRANLEADER-45JAN01-MKHA").upper()
-LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "30"))
+MARKET_TICKER = os.getenv("MARKET_TICKER", DEFAULT_KALSHI_MARKET_TICKER).upper()
+LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", str(DEFAULT_LOOKBACK_DAYS)))
 BAR_INTERVAL = os.getenv("BAR_INTERVAL", "Minutes1")
 MIN_BARS = int(os.getenv("MIN_BARS", "1000"))
 MIN_PRICE_RANGE = float(os.getenv("MIN_PRICE_RANGE", "0.03"))
@@ -42,7 +48,7 @@ TAKE_PROFIT = float(os.getenv("TAKE_PROFIT", "0.030"))
 STOP_LOSS = float(os.getenv("STOP_LOSS", "0.020"))
 
 TRADE_SIZE = Decimal(os.getenv("TRADE_SIZE", "1"))
-INITIAL_CASH = float(os.getenv("INITIAL_CASH", "100"))
+INITIAL_CASH = float(os.getenv("INITIAL_CASH", str(DEFAULT_INITIAL_CASH)))
 
 
 async def run() -> None:

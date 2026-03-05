@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -31,14 +33,28 @@ from nautilus_trader.model.currencies import USDC_POS
 from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.enums import AccountType
 from nautilus_trader.model.enums import OmsType
-from nautilus_trader.model.enums import OrderSide
-from nautilus_trader.model.enums import TimeInForce
-from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import TraderId
 from nautilus_trader.model.objects import Money
+from nautilus_trader.examples.strategies.prediction_market import (
+    TradeTickDeepValueHoldConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market import (
+    TradeTickDeepValueHoldStrategy,
+)
 from nautilus_trader.risk.config import RiskEngineConfig
-from nautilus_trader.trading.strategy import Strategy
-from nautilus_trader.trading.strategy import StrategyConfig
+
+
+try:
+    from _defaults import DEFAULT_INITIAL_CASH
+    from _defaults import DEFAULT_LOOKBACK_DAYS
+    from _defaults import DEFAULT_POLYMARKET_MARKET_SLUG
+except ModuleNotFoundError:
+    _THIS_DIR = Path(__file__).resolve().parent
+    if str(_THIS_DIR) not in sys.path:
+        sys.path.insert(0, str(_THIS_DIR))
+    from _defaults import DEFAULT_INITIAL_CASH
+    from _defaults import DEFAULT_LOOKBACK_DAYS
+    from _defaults import DEFAULT_POLYMARKET_MARKET_SLUG
 
 
 NAME = "polymarket_deep_value_resolution_hold"
@@ -46,92 +62,16 @@ DESCRIPTION = "Buy below a configurable threshold and hold (single market)"
 
 MARKET_SLUG = os.getenv(
     "MARKET_SLUG",
-    "will-gavin-newsom-win-the-2028-democratic-presidential-nomination-568",
+    DEFAULT_POLYMARKET_MARKET_SLUG,
 )
-LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "30"))
+LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", str(DEFAULT_LOOKBACK_DAYS)))
 MIN_TRADES = int(os.getenv("MIN_TRADES", "200"))
 CHART_RESAMPLE_RULE = os.getenv("CHART_RESAMPLE_RULE")
 
 ENTRY_PRICE_MAX = float(os.getenv("ENTRY_PRICE_MAX", "0.247"))
 
 TRADE_SIZE = Decimal(os.getenv("TRADE_SIZE", "100"))
-INITIAL_CASH = float(os.getenv("INITIAL_CASH", "100"))
-
-
-class DeepValueHoldConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
-    instrument_id: InstrumentId
-    trade_size: Decimal = Decimal(20)
-    entry_price_max: float = ENTRY_PRICE_MAX
-
-
-class DeepValueHold(Strategy):
-    """
-    Buy YES when market price falls below threshold, then hold until near-resolution.
-    """
-
-    def __init__(self, config: DeepValueHoldConfig) -> None:
-        super().__init__(config)
-        self._instrument = None
-        self._pending = False
-        self._entered = False
-        self._completed = False
-
-    def on_start(self) -> None:
-        self._instrument = self.cache.instrument(self.config.instrument_id)
-        if self._instrument is None:
-            self.log.error(f"Instrument {self.config.instrument_id} not found; stopping")
-            self.stop()
-            return
-        self.subscribe_trade_ticks(self.config.instrument_id)
-
-    def on_trade_tick(self, tick: TradeTick) -> None:
-        if self._pending or self._completed:
-            return
-
-        price = float(tick.price)
-
-        if (
-            self.portfolio.is_flat(self.config.instrument_id)
-            and not self._entered
-            and price <= self.config.entry_price_max
-        ):
-            self._buy()
-
-    def on_order_filled(self, event) -> None:  # type: ignore[no-untyped-def]
-        self._pending = False
-        if event.order_side == OrderSide.BUY:
-            self._entered = True
-        else:
-            self._completed = True
-
-    def on_order_rejected(self, event) -> None:  # type: ignore[no-untyped-def]
-        self._pending = False
-
-    def on_order_canceled(self, event) -> None:  # type: ignore[no-untyped-def]
-        self._pending = False
-
-    def on_stop(self) -> None:
-        self.cancel_all_orders(self.config.instrument_id)
-        # Force final exit for clean realized PnL and visible exit marker on chart.
-        if self._entered and not self.portfolio.is_flat(self.config.instrument_id):
-            self.close_all_positions(self.config.instrument_id)
-
-    def on_reset(self) -> None:
-        self._instrument = None
-        self._pending = False
-        self._entered = False
-        self._completed = False
-
-    def _buy(self) -> None:
-        assert self._instrument is not None
-        order = self.order_factory.market(
-            instrument_id=self.config.instrument_id,
-            order_side=OrderSide.BUY,
-            quantity=self._instrument.make_qty(float(self.config.trade_size)),
-            time_in_force=TimeInForce.IOC,
-        )
-        self.submit_order(order)
-        self._pending = True
+INITIAL_CASH = float(os.getenv("INITIAL_CASH", str(DEFAULT_INITIAL_CASH)))
 
 
 def _build_probability_frame(
@@ -200,8 +140,8 @@ def _run_backtest(
     engine.add_instrument(instrument)
     engine.add_data(trades)
     engine.add_strategy(
-        DeepValueHold(
-            DeepValueHoldConfig(
+        TradeTickDeepValueHoldStrategy(
+            TradeTickDeepValueHoldConfig(
                 instrument_id=instrument.id,
                 trade_size=TRADE_SIZE,
                 entry_price_max=ENTRY_PRICE_MAX,

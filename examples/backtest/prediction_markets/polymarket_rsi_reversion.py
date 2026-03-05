@@ -15,11 +15,17 @@ from nautilus_trader.examples.strategies.prediction_market import TradeTickRSIRe
 
 
 try:
+    from _defaults import DEFAULT_INITIAL_CASH
+    from _defaults import DEFAULT_LOOKBACK_DAYS
+    from _defaults import DEFAULT_POLYMARKET_MARKET_SLUG
     from _polymarket_single_market_runner import run_single_market_trade_backtest
 except ModuleNotFoundError:
     _THIS_DIR = Path(__file__).resolve().parent
     if str(_THIS_DIR) not in sys.path:
         sys.path.insert(0, str(_THIS_DIR))
+    from _defaults import DEFAULT_INITIAL_CASH
+    from _defaults import DEFAULT_LOOKBACK_DAYS
+    from _defaults import DEFAULT_POLYMARKET_MARKET_SLUG
     from _polymarket_single_market_runner import run_single_market_trade_backtest
 
 
@@ -28,9 +34,9 @@ DESCRIPTION = "RSI pullback mean-reversion on a single Polymarket market"
 
 MARKET_SLUG = os.getenv(
     "MARKET_SLUG",
-    "will-gavin-newsom-win-the-2028-democratic-presidential-nomination-568",
+    DEFAULT_POLYMARKET_MARKET_SLUG,
 )
-LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "30"))
+LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", str(DEFAULT_LOOKBACK_DAYS)))
 MIN_TRADES = int(os.getenv("MIN_TRADES", "300"))
 MIN_PRICE_RANGE = float(os.getenv("MIN_PRICE_RANGE", "0.005"))
 
@@ -41,7 +47,7 @@ TAKE_PROFIT = float(os.getenv("TAKE_PROFIT", "0.004"))
 STOP_LOSS = float(os.getenv("STOP_LOSS", "0.004"))
 
 TRADE_SIZE = Decimal(os.getenv("TRADE_SIZE", "100"))
-INITIAL_CASH = float(os.getenv("INITIAL_CASH", "100"))
+INITIAL_CASH = float(os.getenv("INITIAL_CASH", str(DEFAULT_INITIAL_CASH)))
 
 
 async def run() -> None:
