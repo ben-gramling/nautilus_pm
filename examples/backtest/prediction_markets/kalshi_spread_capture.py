@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections import deque
 from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
@@ -26,15 +25,14 @@ from nautilus_trader.adapters.kalshi.research import load_market_bars
 from nautilus_trader.adapters.prediction_market.research import print_backtest_summary
 from nautilus_trader.adapters.prediction_market.research import run_market_backtest
 from nautilus_trader.core import nautilus_pyo3
+from nautilus_trader.examples.strategies.prediction_market.mean_reversion import (
+    BarMeanReversionConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market.mean_reversion import (
+    BarMeanReversionStrategy as BarMeanReversion,
+)
 from nautilus_trader.model.currencies import USD
-from nautilus_trader.model.data import Bar
-from nautilus_trader.model.data import BarType
-from nautilus_trader.model.enums import OrderSide
-from nautilus_trader.model.enums import TimeInForce
-from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import Venue
-from nautilus_trader.trading.strategy import Strategy
-from nautilus_trader.trading.strategy import StrategyConfig
 
 
 # ── Strategy metadata (shown in the menu) ────────────────────────────────────
@@ -65,97 +63,6 @@ INITIAL_CASH = 1_000.0
 MAX_RETRIES = 4  # retry 429s up to this many times
 RETRY_BASE_DELAY = 2.0  # seconds; doubles on each retry
 # ─────────────────────────────────────────────────────────────────────────────
-
-
-class BarMeanReversionConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
-    instrument_id: InstrumentId
-    bar_type: BarType
-    trade_size: Decimal = Decimal(1)
-    window: int = 20
-    entry_threshold: float = 1.0
-    take_profit: float = 1.0
-    stop_loss: float = 3.0
-
-
-class BarMeanReversion(Strategy):
-    """
-    Mean-reversion spread capture on bar close prices.
-
-    Buys when close dips below a rolling average by `entry_threshold`,
-    exits when price recovers `take_profit` above fill, or stops out
-    `stop_loss` below fill.  Holds at most one position at a time.
-    """
-
-    def __init__(self, config: BarMeanReversionConfig) -> None:
-        super().__init__(config)
-        self._prices: deque[float] = deque(maxlen=config.window)
-        self._entry_price: float | None = None
-        self._pending: bool = False
-        self._instrument = None
-
-    def on_start(self) -> None:
-        self._instrument = self.cache.instrument(self.config.instrument_id)
-        if self._instrument is None:
-            self.log.error(
-                f"Instrument {self.config.instrument_id} not found — stopping."
-            )
-            self.stop()
-            return
-        self.subscribe_bars(self.config.bar_type)
-
-    def on_bar(self, bar: Bar) -> None:
-        price = float(bar.close)
-        self._prices.append(price)
-
-        if len(self._prices) < self.config.window or self._pending:
-            return
-
-        avg = sum(self._prices) / len(self._prices)
-
-        if self.portfolio.is_flat(self.config.instrument_id):
-            if price <= avg - self.config.entry_threshold:
-                self._buy()
-        else:
-            assert self._entry_price is not None
-            take_profit_hit = price >= self._entry_price + self.config.take_profit
-            stop_loss_hit = price <= self._entry_price - self.config.stop_loss
-            if take_profit_hit or stop_loss_hit:
-                self.close_all_positions(self.config.instrument_id)
-                self._pending = True
-
-    def on_order_filled(self, event) -> None:  # type: ignore[no-untyped-def]
-        if event.order_side == OrderSide.BUY:
-            self._entry_price = float(event.last_px)
-        else:
-            self._entry_price = None
-        self._pending = False
-
-    def on_order_rejected(self, event) -> None:  # type: ignore[no-untyped-def]
-        self._pending = False
-
-    def on_order_canceled(self, event) -> None:  # type: ignore[no-untyped-def]
-        self._pending = False
-
-    def on_stop(self) -> None:
-        self.cancel_all_orders(self.config.instrument_id)
-        self.close_all_positions(self.config.instrument_id)
-
-    def on_reset(self) -> None:
-        self._prices.clear()
-        self._entry_price = None
-        self._pending = False
-        self._instrument = None
-
-    def _buy(self) -> None:
-        assert self._instrument is not None
-        order = self.order_factory.market(
-            instrument_id=self.config.instrument_id,
-            order_side=OrderSide.BUY,
-            quantity=self._instrument.make_qty(float(self.config.trade_size)),
-            time_in_force=TimeInForce.IOC,
-        )
-        self.submit_order(order)
-        self._pending = True
 
 async def run() -> None:
     now = datetime.now(UTC)

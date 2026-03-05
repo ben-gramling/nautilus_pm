@@ -22,8 +22,6 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
-import pytest
-
 from nautilus_trader.adapters.kalshi.fee_model import KalshiProportionalFeeModel
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.backtest.engine import BacktestEngineConfig
@@ -55,7 +53,13 @@ from nautilus_trader.risk.config import RiskEngineConfig
 # from sys.path by the root conftest, so normal imports won't work).
 # ---------------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_STRATEGY_FILE = _REPO_ROOT / "examples" / "backtest" / "kalshi_spread_capture.py"
+_STRATEGY_FILE = (
+    _REPO_ROOT
+    / "examples"
+    / "backtest"
+    / "prediction_markets"
+    / "kalshi_spread_capture.py"
+)
 
 
 def _load_strategy_module():

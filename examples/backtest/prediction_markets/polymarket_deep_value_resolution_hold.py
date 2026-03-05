@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -26,6 +25,9 @@ from nautilus_trader.adapters.polymarket.common.gamma_markets import (
 )
 from nautilus_trader.adapters.polymarket.common.parsing import parse_polymarket_instrument
 from nautilus_trader.adapters.polymarket.fee_model import PolymarketFeeModel
+from nautilus_trader.adapters.prediction_market.backtest_utils import build_market_prices
+from nautilus_trader.adapters.prediction_market.backtest_utils import extract_price_points
+from nautilus_trader.adapters.prediction_market.backtest_utils import extract_realized_pnl
 from nautilus_trader.analysis.legacy_plot_adapter import create_legacy_backtest_chart
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
@@ -138,25 +140,6 @@ class DeepValueHold(Strategy):
         self._pending = True
 
 
-def _parse_float(value: Any, default: float = 0.0) -> float:
-    if value is None:
-        return default
-    if isinstance(value, int | float):
-        return float(value)
-
-    text = str(value).replace("_", "").replace("\u2212", "-").strip()
-    if not text:
-        return default
-
-    for token in text.split():
-        try:
-            return float(token)
-        except ValueError:
-            continue
-
-    return default
-
-
 def _parse_json_list(value: Any) -> list[Any]:
     if value is None:
         return []
@@ -169,25 +152,6 @@ def _parse_json_list(value: Any) -> list[Any]:
         except Exception:
             return []
     return []
-
-
-def _to_naive_utc(value: object) -> datetime | None:
-    ts = pd.to_datetime(value, unit="ns", utc=True, errors="coerce")
-    if pd.isna(ts):
-        return None
-    if isinstance(ts, pd.DatetimeIndex):
-        if len(ts) == 0:
-            return None
-        ts = ts[0]
-    assert isinstance(ts, pd.Timestamp)
-    return ts.tz_convert("UTC").tz_localize(None).to_pydatetime()
-
-
-def _extract_pnl(pos_report: pd.DataFrame) -> float:
-    total = 0.0
-    for _, row in pos_report.iterrows():
-        total += _parse_float(row.get("realized_pnl", 0.0), default=0.0)
-    return total
 
 
 def _extract_outcome_tokens(gamma_market: dict[str, Any]) -> list[tuple[str, str]]:
@@ -261,22 +225,6 @@ def _build_probability_frame(
     return frame
 
 
-def _build_market_prices_from_trades(trades: list[TradeTick]) -> list[tuple[datetime, float]]:
-    points: list[tuple[datetime, float]] = []
-    for tick in trades:
-        ts = _to_naive_utc(tick.ts_event)
-        if ts is None:
-            continue
-        points.append((ts, float(tick.price)))
-
-    if not points:
-        return []
-
-    frame = pd.DataFrame(points, columns=["ts", "price"]).sort_values("ts")
-    frame = frame.drop_duplicates(subset=["ts"], keep="last")
-    return [(row.ts.to_pydatetime(), float(row.price)) for row in frame.itertuples(index=False)]
-
-
 def _slugify(value: str) -> str:
     cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in value)
     while "--" in cleaned:
@@ -323,9 +271,10 @@ def _run_backtest(
 
     fills = engine.trader.generate_order_fills_report()
     positions = engine.trader.generate_positions_report()
-    pnl = _extract_pnl(positions)
+    pnl = extract_realized_pnl(positions)
 
     prob_frame = _build_probability_frame(trades=trades, entry_price_max=ENTRY_PRICE_MAX)
+    price_points = extract_price_points(trades, price_attr="price")
 
     safe_outcome = _slugify(outcome) or "outcome"
     output_path = f"output/{NAME}_{slug}_{safe_outcome}_legacy.html"
@@ -336,7 +285,7 @@ def _run_backtest(
         strategy_name=f"{NAME}:{slug}:{outcome}",
         platform="polymarket",
         initial_cash=INITIAL_CASH,
-        market_prices={str(instrument.id): _build_market_prices_from_trades(trades)},
+        market_prices={str(instrument.id): build_market_prices(price_points)},
         user_probabilities=prob_frame.get("user_probability"),
         market_probabilities=prob_frame.get("market_probability"),
         outcomes=prob_frame.get("outcome"),
@@ -444,9 +393,60 @@ def _market_filters() -> dict[str, Any]:
     return filters
 
 
+async def _select_market_candidate(
+    market: dict[str, Any],
+    client: nautilus_pyo3.HttpClient,
+    volume_fn,
+) -> dict[str, Any] | None:
+    slug = str(market.get("slug", ""))
+    if not slug:
+        return None
+
+    volume_num = volume_fn(market.get("volumeNum"))
+    if volume_num < MIN_VOLUME_NUM:
+        return None
+
+    outcome_tokens = _extract_outcome_tokens(market)
+    if not outcome_tokens:
+        return None
+
+    best_match: dict[str, Any] | None = None
+    for outcome, token_id in outcome_tokens:
+        candidate = await _evaluate_outcome_candidate(
+            market=market,
+            outcome=outcome,
+            token_id=token_id,
+            client=client,
+        )
+        if candidate is None:
+            continue
+        if best_match is None or float(candidate["last_price"]) > float(best_match["last_price"]):
+            best_match = candidate
+
+    if best_match is None:
+        return None
+
+    return {
+        "slug": slug,
+        "loader": best_match["loader"],
+        "trades": best_match["trades"],
+        "outcome": best_match["outcome"],
+        "volume_num": volume_num,
+        "min_price": best_match["min_price"],
+        "max_price": best_match["max_price"],
+        "last_price": best_match["last_price"],
+    }
+
+
 async def _discover_candidates(
     client: nautilus_pyo3.HttpClient,
 ) -> tuple[list[dict[str, Any]], int]:
+    def _volume(value: Any) -> float:
+        try:
+            return float(value or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
     raw_markets = await list_markets(
         http_client=client,
         filters=_market_filters(),
@@ -454,7 +454,7 @@ async def _discover_candidates(
     )
     ranked = sorted(
         raw_markets,
-        key=lambda m: _parse_float(m.get("volumeNum"), default=0.0),
+        key=lambda m: _volume(m.get("volumeNum")),
         reverse=True,
     )
     selected: list[dict[str, Any]] = []
@@ -465,51 +465,17 @@ async def _discover_candidates(
             break
 
         checked += 1
-        slug = str(market.get("slug", ""))
-        if not slug:
+        candidate = await _select_market_candidate(market=market, client=client, volume_fn=_volume)
+        if candidate is None:
             continue
 
-        volume_num = _parse_float(market.get("volumeNum"), default=0.0)
-        if volume_num < MIN_VOLUME_NUM:
-            continue
-
-        outcome_tokens = _extract_outcome_tokens(market)
-        if not outcome_tokens:
-            continue
-
-        best_match: dict[str, Any] | None = None
-        for outcome, token_id in outcome_tokens:
-            candidate = await _evaluate_outcome_candidate(
-                market=market,
-                outcome=outcome,
-                token_id=token_id,
-                client=client,
-            )
-            if candidate is None:
-                continue
-            if best_match is None or float(candidate["last_price"]) > float(best_match["last_price"]):
-                best_match = candidate
-
-        if best_match is None:
-            continue
-
-        selected.append(
-            {
-                "slug": slug,
-                "loader": best_match["loader"],
-                "trades": best_match["trades"],
-                "outcome": best_match["outcome"],
-                "volume_num": volume_num,
-                "min_price": best_match["min_price"],
-                "max_price": best_match["max_price"],
-                "last_price": best_match["last_price"],
-            }
-        )
+        selected.append(candidate)
 
         print(
-            f"  selected {slug}:{selected[-1]['outcome']} | volume={volume_num:.0f} "
-            f"trades={len(selected[-1]['trades'])} min={selected[-1]['min_price']:.3f} "
-            f"max={selected[-1]['max_price']:.3f} last={selected[-1]['last_price']:.3f}"
+            f"  selected {candidate['slug']}:{candidate['outcome']} | "
+            f"volume={candidate['volume_num']:.0f} trades={len(candidate['trades'])} "
+            f"min={candidate['min_price']:.3f} max={candidate['max_price']:.3f} "
+            f"last={candidate['last_price']:.3f}"
         )
 
     return selected, checked

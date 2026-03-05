@@ -22,8 +22,6 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
-import pytest
-
 from nautilus_trader.adapters.polymarket.fee_model import PolymarketFeeModel
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.backtest.engine import BacktestEngineConfig
@@ -51,7 +49,13 @@ from nautilus_trader.risk.config import RiskEngineConfig
 # from sys.path by the root conftest, so normal imports won't work).
 # ---------------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_STRATEGY_FILE = _REPO_ROOT / "examples" / "backtest" / "polymarket_spread_capture.py"
+_STRATEGY_FILE = (
+    _REPO_ROOT
+    / "examples"
+    / "backtest"
+    / "prediction_markets"
+    / "polymarket_spread_capture.py"
+)
 
 
 def _load_strategy_module():

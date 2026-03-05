@@ -46,6 +46,10 @@ from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
 
 
+# ── Strategy metadata (shown in the menu) ────────────────────────────────────
+NAME = "kalshi_ema_bars"
+DESCRIPTION = "Fetch Kalshi bars to catalog, then run EMA-cross backtest"
+
 # ---------------------------------------------------------------------------
 # Configure these constants for your backtest
 # ---------------------------------------------------------------------------
@@ -181,6 +185,10 @@ def run_backtest() -> None:
     node.dispose()
 
 
-if __name__ == "__main__":
-    asyncio.run(fetch_and_catalog())
+async def run() -> None:
+    await fetch_and_catalog()
     run_backtest()
+
+
+if __name__ == "__main__":
+    asyncio.run(run())

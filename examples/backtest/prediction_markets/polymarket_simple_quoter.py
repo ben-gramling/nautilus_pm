@@ -52,6 +52,10 @@ from nautilus_trader.model.objects import Money
 #   python nautilus_trader/adapters/polymarket/scripts/list_updown_markets.py
 MARKET_SLUG = "gta-vi-released-before-june-2026"
 
+# ── Strategy metadata (shown in the menu) ────────────────────────────────────
+NAME = "polymarket_simple_quoter"
+DESCRIPTION = "Load one Polymarket market and run an EMA long-only backtest"
+
 
 async def run_backtest(
     market_slug: str,
@@ -136,13 +140,13 @@ async def run_backtest(
     engine.dispose()
 
 
+async def run() -> None:
+    await run_backtest(market_slug=MARKET_SLUG)
+
+
 if __name__ == "__main__":
     try:
-        asyncio.run(
-            run_backtest(
-                market_slug=MARKET_SLUG,
-            ),
-        )
+        asyncio.run(run())
     except Exception as e:
         print(f"Error running backtest: {e}")
         raise

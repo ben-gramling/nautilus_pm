@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections import deque
 from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
@@ -23,13 +22,13 @@ from nautilus_trader.adapters.polymarket.research import discover_markets
 from nautilus_trader.adapters.polymarket.research import load_market_trades
 from nautilus_trader.adapters.prediction_market.research import print_backtest_summary
 from nautilus_trader.adapters.prediction_market.research import run_market_backtest
+from nautilus_trader.examples.strategies.prediction_market.mean_reversion import (
+    TradeTickMeanReversionConfig as SpreadCaptureConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market.mean_reversion import (
+    TradeTickMeanReversionStrategy as SpreadCapture,
+)
 from nautilus_trader.model.currencies import USDC_POS
-from nautilus_trader.model.data import TradeTick
-from nautilus_trader.model.enums import OrderSide
-from nautilus_trader.model.enums import TimeInForce
-from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.trading.strategy import Strategy
-from nautilus_trader.trading.strategy import StrategyConfig
 
 
 # ── Strategy metadata (shown in the menu) ────────────────────────────────────
@@ -54,93 +53,6 @@ TRADE_SIZE = Decimal(20)
 INITIAL_CASH = 1_000.0
 # ─────────────────────────────────────────────────────────────────────────────
 
-
-class SpreadCaptureConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]
-    instrument_id: InstrumentId
-    trade_size: Decimal = Decimal(20)
-    vwap_window: int = 20
-    entry_threshold: float = ENTRY_THRESHOLD
-    take_profit: float = TAKE_PROFIT
-    stop_loss: float = STOP_LOSS
-
-
-class SpreadCapture(Strategy):
-    """
-    Mean-reversion spread capture strategy.
-
-    Buys when price dips below a rolling average and exits on recovery
-    or stop-loss.  Holds at most one position at a time.
-    """
-
-    def __init__(self, config: SpreadCaptureConfig) -> None:
-        super().__init__(config)
-        self._prices: deque[float] = deque(maxlen=config.vwap_window)
-        self._entry_price: float | None = None
-        self._pending: bool = False
-        self._instrument = None
-
-    def on_start(self) -> None:
-        self._instrument = self.cache.instrument(self.config.instrument_id)
-        if self._instrument is None:
-            self.log.error(
-                f"Instrument {self.config.instrument_id} not found — stopping."
-            )
-            self.stop()
-            return
-        self.subscribe_trade_ticks(self.config.instrument_id)
-
-    def on_trade_tick(self, tick: TradeTick) -> None:
-        price = float(tick.price)
-        self._prices.append(price)
-
-        if len(self._prices) < self.config.vwap_window or self._pending:
-            return
-
-        rolling_avg = sum(self._prices) / len(self._prices)
-
-        if self.portfolio.is_flat(self.config.instrument_id):
-            if price <= rolling_avg - self.config.entry_threshold:
-                self._buy()
-        else:
-            take_profit_hit = price >= self._entry_price + self.config.take_profit
-            stop_loss_hit = price <= self._entry_price - self.config.stop_loss
-            if take_profit_hit or stop_loss_hit:
-                self.close_all_positions(self.config.instrument_id)
-                self._pending = True
-
-    def on_order_filled(self, event) -> None:  # type: ignore[no-untyped-def]
-        if event.order_side == OrderSide.BUY:
-            self._entry_price = float(event.last_px)
-        else:
-            self._entry_price = None
-        self._pending = False
-
-    def on_order_rejected(self, event) -> None:  # type: ignore[no-untyped-def]
-        self._pending = False
-
-    def on_order_canceled(self, event) -> None:  # type: ignore[no-untyped-def]
-        self._pending = False
-
-    def on_stop(self) -> None:
-        self.cancel_all_orders(self.config.instrument_id)
-        self.close_all_positions(self.config.instrument_id)
-
-    def on_reset(self) -> None:
-        self._prices.clear()
-        self._entry_price = None
-        self._pending = False
-        self._instrument = None
-
-    def _buy(self) -> None:
-        assert self._instrument is not None
-        order = self.order_factory.market(
-            instrument_id=self.config.instrument_id,
-            order_side=OrderSide.BUY,
-            quantity=self._instrument.make_qty(float(self.config.trade_size)),
-            time_in_force=TimeInForce.IOC,
-        )
-        self.submit_order(order)
-        self._pending = True
 
 async def run() -> None:
     now = datetime.now(UTC)

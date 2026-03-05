@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Backtest runner — interactive strategy menu.
+"""
+Backtest runner - interactive strategy menu.
 
-Discovers strategies in examples/backtest/ (and any directories listed in
+Discovers strategies in examples/backtest/ and
+examples/backtest/prediction_markets/ (and any directories listed in
 the EXTRA_STRATEGIES_DIRS environment variable) that expose:
 
-    NAME        str   — display name shown in the menu
-    DESCRIPTION str   — one-line description shown in the menu
-    run()       async — entry point called when the strategy is selected
+    NAME        str   - display name shown in the menu
+    DESCRIPTION str   - one-line description shown in the menu
+    run()       async - entry point called when the strategy is selected
 
 Run via:
     .venv/bin/python main.py
@@ -20,6 +22,7 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
+
 
 # ---------------------------------------------------------------------------
 # sys.path: wheel takes priority for compiled extensions, but we extend
@@ -37,6 +40,7 @@ if str(_REPO_ROOT) in sys.path:
 
 import nautilus_trader.adapters as _nt_adapters  # noqa: E402
 
+
 _LOCAL_ADAPTERS = _REPO_ROOT / "nautilus_trader" / "adapters"
 if str(_LOCAL_ADAPTERS) not in _nt_adapters.__path__:
     _nt_adapters.__path__.insert(0, str(_LOCAL_ADAPTERS))
@@ -44,12 +48,24 @@ if str(_LOCAL_ADAPTERS) not in _nt_adapters.__path__:
 
 # Directories to scan. EXTRA_STRATEGIES_DIRS can be a colon-separated list of
 # additional paths (e.g. strategies from a sibling repo).
-STRATEGIES_DIRS: list[Path] = [_REPO_ROOT / "examples" / "backtest"]
+_DEFAULT_STRATEGY_DIRS: list[Path] = [
+    _REPO_ROOT / "examples" / "backtest",
+    _REPO_ROOT / "examples" / "backtest" / "prediction_markets",
+]
+_EXTRA_STRATEGY_DIRS = [
+    Path(extra.strip())
+    for extra in os.environ.get("EXTRA_STRATEGIES_DIRS", "").split(":")
+    if extra.strip()
+]
 
-for _extra in os.environ.get("EXTRA_STRATEGIES_DIRS", "").split(":"):
-    _extra = _extra.strip()
-    if _extra:
-        STRATEGIES_DIRS.append(Path(_extra))
+STRATEGIES_DIRS: list[Path] = []
+_seen_dirs: set[Path] = set()
+for strategy_dir in _DEFAULT_STRATEGY_DIRS + _EXTRA_STRATEGY_DIRS:
+    resolved = strategy_dir.expanduser().resolve()
+    if resolved in _seen_dirs:
+        continue
+    _seen_dirs.add(resolved)
+    STRATEGIES_DIRS.append(resolved)
 
 # ---------------------------------------------------------------------------
 
