@@ -223,9 +223,7 @@ def test_standardize_yes_price_hover_shows_timestamp_and_yes_price() -> None:
     ]
 
 
-def test_append_brier_panel_left_aligns_title() -> None:
-    bokeh_models = pytest.importorskip("bokeh.models")
-
+def test_append_brier_panel_uses_left_axis_label_instead_of_top_title() -> None:
     frame = pd.DataFrame(
         {
             "brier_advantage": [0.1, -0.05],
@@ -240,13 +238,11 @@ def test_append_brier_panel_left_aligns_title() -> None:
     assert result is layout
     assert len(layout.children) == 1
     figure = layout.children[0]
-    assert isinstance(figure.title, bokeh_models.Title)
-    assert figure.title.align == "left"
+    assert figure.title is None
+    assert figure.yaxis[0].axis_label == "Cumulative Brier Advantage"
 
 
-def test_append_brier_placeholder_panel_left_aligns_title() -> None:
-    bokeh_models = pytest.importorskip("bokeh.models")
-
+def test_append_brier_placeholder_panel_uses_left_axis_label_instead_of_top_title() -> None:
     layout = _DummyLayout()
 
     result = adapter._append_brier_placeholder_panel(layout, "Unavailable until the market resolves.")
@@ -254,8 +250,8 @@ def test_append_brier_placeholder_panel_left_aligns_title() -> None:
     assert result is layout
     assert len(layout.children) == 1
     figure = layout.children[0]
-    assert isinstance(figure.title, bokeh_models.Title)
-    assert figure.title.align == "left"
+    assert figure.title is None
+    assert figure.yaxis[0].axis_label == "Cumulative Brier Advantage"
 
 
 @pytest.mark.parametrize("with_brier_panel", [False, True])

@@ -846,12 +846,6 @@ def _append_chart_panel(layout: Any, panel: Any) -> Any:
     return column(layout, panel, sizing_mode="stretch_width")
 
 
-def _apply_legacy_title_style(fig: Any) -> None:
-    title = getattr(fig, "title", None)
-    if title is not None and hasattr(title, "align"):
-        title.align = "left"
-
-
 def _brier_unavailable_reason(
     *,
     user_probabilities: pd.Series | None,
@@ -880,14 +874,13 @@ def _append_brier_placeholder_panel(layout: Any, message: str) -> Any:
         raise ImportError("Bokeh is required for legacy chart rendering.") from exc
 
     fig = figure(
-        title="Cumulative Brier Advantage",
+        title=None,
         x_axis_type="datetime",
         height=220,
         tools="save",
         sizing_mode="stretch_width",
         toolbar_location="right",
     )
-    _apply_legacy_title_style(fig)
     fig.add_layout(
         Span(
             location=0,
@@ -909,7 +902,7 @@ def _append_brier_placeholder_panel(layout: Any, message: str) -> Any:
         ),
     )
     fig.xaxis.axis_label = "Date"
-    fig.yaxis.axis_label = "Market Brier - Strategy Brier"
+    fig.yaxis.axis_label = "Cumulative Brier Advantage"
 
     return _append_chart_panel(layout, fig)
 
@@ -945,7 +938,7 @@ def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
     )
 
     fig = figure(
-        title="Cumulative Brier Advantage",
+        title=None,
         x_axis_type="datetime",
         height=220,
         tools="xpan,xwheel_zoom,box_zoom,undo,redo,reset,save",
@@ -954,7 +947,6 @@ def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
         sizing_mode="stretch_width",
         toolbar_location="right",
     )
-    _apply_legacy_title_style(fig)
 
     fig.line(
         x="datetime",
@@ -987,7 +979,7 @@ def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
     )
 
     fig.xaxis.axis_label = "Date"
-    fig.yaxis.axis_label = "Market Brier - Strategy Brier"
+    fig.yaxis.axis_label = "Cumulative Brier Advantage"
     fig.yaxis.formatter = NumeralTickFormatter(format="0.0000")
     fig.legend.location = "top_left"
     fig.legend.click_policy = "hide"
