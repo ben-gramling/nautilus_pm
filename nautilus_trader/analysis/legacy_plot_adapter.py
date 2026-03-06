@@ -846,6 +846,12 @@ def _append_chart_panel(layout: Any, panel: Any) -> Any:
     return column(layout, panel, sizing_mode="stretch_width")
 
 
+def _apply_legacy_title_style(fig: Any) -> None:
+    title = getattr(fig, "title", None)
+    if title is not None and hasattr(title, "align"):
+        title.align = "left"
+
+
 def _brier_unavailable_reason(
     *,
     user_probabilities: pd.Series | None,
@@ -881,6 +887,7 @@ def _append_brier_placeholder_panel(layout: Any, message: str) -> Any:
         sizing_mode="stretch_width",
         toolbar_location="right",
     )
+    _apply_legacy_title_style(fig)
     fig.add_layout(
         Span(
             location=0,
@@ -947,6 +954,7 @@ def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
         sizing_mode="stretch_width",
         toolbar_location="right",
     )
+    _apply_legacy_title_style(fig)
 
     fig.line(
         x="datetime",

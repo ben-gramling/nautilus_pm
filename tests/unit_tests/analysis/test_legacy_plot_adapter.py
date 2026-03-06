@@ -223,6 +223,41 @@ def test_standardize_yes_price_hover_shows_timestamp_and_yes_price() -> None:
     ]
 
 
+def test_append_brier_panel_left_aligns_title() -> None:
+    bokeh_models = pytest.importorskip("bokeh.models")
+
+    frame = pd.DataFrame(
+        {
+            "brier_advantage": [0.1, -0.05],
+            "cumulative_brier_advantage": [0.1, 0.05],
+        },
+        index=pd.to_datetime(["2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"], utc=True),
+    )
+    layout = _DummyLayout()
+
+    result = adapter._append_brier_panel(layout, frame)
+
+    assert result is layout
+    assert len(layout.children) == 1
+    figure = layout.children[0]
+    assert isinstance(figure.title, bokeh_models.Title)
+    assert figure.title.align == "left"
+
+
+def test_append_brier_placeholder_panel_left_aligns_title() -> None:
+    bokeh_models = pytest.importorskip("bokeh.models")
+
+    layout = _DummyLayout()
+
+    result = adapter._append_brier_placeholder_panel(layout, "Unavailable until the market resolves.")
+
+    assert result is layout
+    assert len(layout.children) == 1
+    figure = layout.children[0]
+    assert isinstance(figure.title, bokeh_models.Title)
+    assert figure.title.align == "left"
+
+
 @pytest.mark.parametrize("with_brier_panel", [False, True])
 def test_create_legacy_backtest_chart_saves_final_layout_without_requiring_brier_panel(
     monkeypatch: pytest.MonkeyPatch,

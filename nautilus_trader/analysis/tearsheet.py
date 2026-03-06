@@ -1301,6 +1301,8 @@ def create_cumulative_brier_advantage_chart(
 
     fig.update_layout(
         title=title,
+        title_x=0.0,
+        title_xanchor="left",
         xaxis_title="Date",
         yaxis_title="Cumulative Brier Advantage",
         hovermode="x unified",

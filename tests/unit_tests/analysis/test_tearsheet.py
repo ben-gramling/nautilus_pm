@@ -286,6 +286,8 @@ def test_create_cumulative_brier_advantage_chart():
     # Assert
     assert fig is not None
     assert "Cumulative Brier Advantage" in fig.layout.title.text
+    assert fig.layout.title.x == 0.0
+    assert fig.layout.title.xanchor == "left"
     assert len(fig.data) == 1
     assert fig.data[0].y[-1] > 0  # Positive means strategy is outperforming market on Brier
 
