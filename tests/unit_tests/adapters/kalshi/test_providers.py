@@ -117,3 +117,11 @@ def test_instrument_maker_fee_zero():
     market = _make_market_dict()
     instrument = _market_dict_to_instrument(market)
     assert instrument.maker_fee == decimal.Decimal(0)
+
+
+def test_instrument_preserves_market_metadata():
+    market = _make_market_dict(result="yes", settlement_value=1)
+
+    instrument = _market_dict_to_instrument(market)
+
+    assert instrument.info == market

@@ -156,11 +156,36 @@ def infer_realized_outcome(source: object | None) -> float | None:
     if info.get("is_50_50_outcome") is True:
         return 0.5
 
+    outcome_name = str(getattr(source, "outcome", "")).strip().casefold()
+
+    # Kalshi publishes the resolved side directly on the market payload.
+    result = str(info.get("result", "")).strip().casefold()
+    if result in {"yes", "no"}:
+        if outcome_name == "yes":
+            return 1.0 if result == "yes" else 0.0
+        if outcome_name == "no":
+            return 1.0 if result == "no" else 0.0
+
+    # Some binary markets expose a numeric expiration/settlement value.
+    for key in ("settlement_value", "expiration_value"):
+        raw_value = info.get(key)
+        if raw_value in (None, ""):
+            continue
+
+        try:
+            numeric_value = float(raw_value)
+        except (TypeError, ValueError):
+            continue
+
+        if numeric_value in {0.0, 1.0}:
+            return numeric_value
+        if numeric_value in {0.0, 100.0}:
+            return numeric_value / 100.0
+
     tokens = info.get("tokens")
     if not isinstance(tokens, Sequence):
         return None
 
-    outcome_name = str(getattr(source, "outcome", "")).strip().casefold()
     if not outcome_name:
         return None
 

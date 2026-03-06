@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from nautilus_trader.adapters.prediction_market.backtest_utils import build_brier_inputs
 from nautilus_trader.adapters.prediction_market.backtest_utils import infer_realized_outcome
@@ -36,6 +37,29 @@ def test_infer_realized_outcome_handles_5050_markets() -> None:
     )
 
     assert infer_realized_outcome(instrument) == 0.5
+
+
+@pytest.mark.parametrize(
+    ("outcome", "info", "expected"),
+    [
+        ("Yes", {"result": "yes"}, 1.0),
+        ("Yes", {"result": "no"}, 0.0),
+        ("No", {"result": "yes"}, 0.0),
+        ("No", {"result": "no"}, 1.0),
+        ("Yes", {"settlement_value": 1}, 1.0),
+        ("Yes", {"settlement_value": 0}, 0.0),
+        ("Yes", {"expiration_value": 100}, 1.0),
+        ("Yes", {"expiration_value": 0}, 0.0),
+    ],
+)
+def test_infer_realized_outcome_handles_kalshi_resolution_fields(
+    outcome: str,
+    info: dict[str, object],
+    expected: float,
+) -> None:
+    instrument = SimpleNamespace(outcome=outcome, info=info)
+
+    assert infer_realized_outcome(instrument) == expected
 
 
 def test_build_brier_inputs_returns_empty_outcomes_without_resolution() -> None:

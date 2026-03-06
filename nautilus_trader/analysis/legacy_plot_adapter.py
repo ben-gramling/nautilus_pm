@@ -833,12 +833,85 @@ def _platform_enum(models_module: Any, platform: str) -> Any:
     return models_module.Platform.KALSHI
 
 
+def _append_chart_panel(layout: Any, panel: Any) -> Any:
+    try:
+        from bokeh.layouts import column
+    except ImportError as exc:  # pragma: no cover - runtime dependency
+        raise ImportError("Bokeh is required for legacy chart rendering.") from exc
+
+    if hasattr(layout, "children"):
+        layout.children.append(panel)
+        return layout
+
+    return column(layout, panel, sizing_mode="stretch_width")
+
+
+def _brier_unavailable_reason(
+    *,
+    user_probabilities: pd.Series | None,
+    market_probabilities: pd.Series | None,
+    outcomes: pd.Series | None,
+) -> str | None:
+    has_probability_inputs = any(
+        series is not None and not series.empty
+        for series in (user_probabilities, market_probabilities)
+    )
+    if not has_probability_inputs:
+        return None
+
+    if outcomes is None or outcomes.empty:
+        return "Unavailable until the market resolves."
+
+    return "Unavailable for the selected probability window."
+
+
+def _append_brier_placeholder_panel(layout: Any, message: str) -> Any:
+    try:
+        from bokeh.models import Label
+        from bokeh.models import Span
+        from bokeh.plotting import figure
+    except ImportError as exc:  # pragma: no cover - runtime dependency
+        raise ImportError("Bokeh is required for legacy chart rendering.") from exc
+
+    fig = figure(
+        title="Cumulative Brier Advantage",
+        x_axis_type="datetime",
+        height=220,
+        tools="save",
+        sizing_mode="stretch_width",
+        toolbar_location="right",
+    )
+    fig.add_layout(
+        Span(
+            location=0,
+            dimension="width",
+            line_color="#666666",
+            line_dash="dashed",
+            line_width=1,
+        ),
+    )
+    fig.add_layout(
+        Label(
+            x=20,
+            y=105,
+            x_units="screen",
+            y_units="screen",
+            text=message,
+            text_font_size="11pt",
+            text_color="#666666",
+        ),
+    )
+    fig.xaxis.axis_label = "Date"
+    fig.yaxis.axis_label = "Market Brier - Strategy Brier"
+
+    return _append_chart_panel(layout, fig)
+
+
 def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
     if brier_frame.empty:
         return layout
 
     try:
-        from bokeh.layouts import column
         from bokeh.models import ColumnDataSource
         from bokeh.models import HoverTool
         from bokeh.models import NumeralTickFormatter
@@ -911,11 +984,7 @@ def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
     fig.legend.location = "top_left"
     fig.legend.click_policy = "hide"
 
-    if hasattr(layout, "children"):
-        layout.children.append(fig)
-        return layout
-
-    return column(layout, fig, sizing_mode="stretch_width")
+    return _append_chart_panel(layout, fig)
 
 
 def _iter_layout_nodes(node: Any):
@@ -936,304 +1005,103 @@ def _iter_figures(layout: Any):
             yield node
 
 
-def _remove_data_banner(layout: Any) -> Any:
-    if not hasattr(layout, "children") or not layout.children:
-        return layout
+def _field_name(spec: Any) -> str | None:
+    if isinstance(spec, str):
+        return spec
+    if isinstance(spec, dict):
+        field = spec.get("field")
+        return str(field) if field is not None else None
 
-    first = layout.children[0]
-    text = getattr(first, "text", "")
-    if isinstance(text, str) and "<b>Data:</b>" in text:
-        layout.children = list(layout.children[1:])
-    return layout
-
-
-def _extract_equity_timeline(layout: Any) -> pd.DataFrame:
-    candidates: list[pd.DataFrame] = []
-
-    for fig in _iter_figures(layout):
-        for renderer in getattr(fig, "renderers", []):
-            source = getattr(renderer, "data_source", None)
-            data = getattr(source, "data", None)
-            if not isinstance(data, dict):
-                continue
-            if "datetime" not in data or "index" not in data:
-                continue
-
-            if "equity_dollar" in data:
-                equity_values = data["equity_dollar"]
-            elif "equity" in data:
-                equity_values = data["equity"]
-            elif "cash" in data and "pos_value" in data:
-                equity_values = np.asarray(data["cash"], dtype=float) + np.asarray(
-                    data["pos_value"],
-                    dtype=float,
-                )
-            else:
-                continue
-
-            frame = pd.DataFrame(
-                {
-                    "datetime": pd.to_datetime(data["datetime"], errors="coerce"),
-                    "index": pd.to_numeric(pd.Series(data["index"]), errors="coerce"),
-                    "equity": pd.to_numeric(pd.Series(equity_values), errors="coerce"),
-                },
-            ).dropna()
-
-            if frame.empty:
-                continue
-
-            frame = frame.sort_values("datetime").drop_duplicates(subset=["datetime"], keep="last")
-            candidates.append(frame)
-
-    if not candidates:
-        return pd.DataFrame(columns=["datetime", "index", "equity"])
-
-    return max(candidates, key=len)
+    field = getattr(spec, "field", None)
+    return str(field) if field is not None else None
 
 
-def _build_daily_performance(
-    equity_timeline: pd.DataFrame,
-    initial_cash: float,
-) -> pd.DataFrame:
-    if equity_timeline.empty:
-        return pd.DataFrame()
-
-    series = (
-        equity_timeline.set_index("datetime")["equity"]
-        .sort_index()
-        .astype(float)
-    )
-    daily_close = series.resample("1D").last().dropna()
-    if daily_close.empty:
-        return pd.DataFrame()
-
-    daily_pnl = daily_close.diff()
-    if len(daily_close) > 0:
-        daily_pnl.iloc[0] = float(daily_close.iloc[0]) - float(initial_cash)
-
-    daily_returns = daily_close.pct_change()
-    if len(daily_close) > 0 and initial_cash:
-        daily_returns.iloc[0] = (float(daily_close.iloc[0]) - float(initial_cash)) / float(
-            initial_cash,
-        )
-    daily_returns = daily_returns.fillna(0.0)
-
-    lookup = equity_timeline[["datetime", "index"]].sort_values("datetime")
-    aligned = pd.merge_asof(
-        pd.DataFrame({"datetime": daily_close.index}).sort_values("datetime"),
-        lookup,
-        on="datetime",
-        direction="backward",
-    )
-    aligned["index"] = aligned["index"].ffill().bfill().fillna(0.0)
-
-    return pd.DataFrame(
-        {
-            "datetime": daily_close.index.to_pydatetime(),
-            "x": aligned["index"].to_numpy(dtype=float),
-            "pnl": daily_pnl.to_numpy(dtype=float),
-            "ret": daily_returns.to_numpy(dtype=float),
-        },
-    )
-
-
-def _rebuild_daily_pnl_panel(layout: Any, daily: pd.DataFrame) -> None:
-    if daily.empty:
+def _filter_tool_container(container: Any, tools_to_remove: set[Any]) -> None:
+    if container is None or not tools_to_remove:
         return
 
-    try:
-        from bokeh.models import ColumnDataSource
-        from bokeh.models import HoverTool
-        from bokeh.models import NumeralTickFormatter
-    except ImportError:
+    tools = getattr(container, "tools", None)
+    if tools is None:
         return
 
-    target = None
-    for fig in _iter_figures(layout):
-        labels = [str(axis.axis_label or "") for axis in getattr(fig, "yaxis", [])]
-        if any("periodic" in label.lower() for label in labels):
-            target = fig
-            break
+    filtered_tools: list[Any] = []
+    changed = False
 
-    if target is None:
-        return
-
-    x_vals = daily["x"].to_numpy(dtype=float)
-    diffs = pd.Series(x_vals).sort_values().diff().dropna()
-    width = max(1.0, float(diffs.median()) * 0.8) if not diffs.empty else 1.0
-
-    source = ColumnDataSource(
-        {
-            "x": x_vals,
-            "pnl": daily["pnl"].to_numpy(dtype=float),
-            "pnl_pos": np.maximum(daily["pnl"].to_numpy(dtype=float), 0.0),
-            "pnl_neg": np.minimum(daily["pnl"].to_numpy(dtype=float), 0.0),
-            "datetime": pd.to_datetime(daily["datetime"]).to_numpy(dtype="datetime64[ns]"),
-        },
-    )
-
-    if target.yaxis:
-        target.yaxis[0].axis_label = "P&L (Daily)"
-    target.renderers = [r for r in target.renderers if not hasattr(r, "data_source")]
-    target.tools = [tool for tool in target.tools if tool.__class__.__name__ != "HoverTool"]
-
-    pos = target.vbar(
-        x="x",
-        top="pnl_pos",
-        source=source,
-        width=width,
-        color="#2ecc71",
-        alpha=0.75,
-        legend_label="Gain",
-    )
-    neg = target.vbar(
-        x="x",
-        top="pnl_neg",
-        source=source,
-        width=width,
-        color="#e74c3c",
-        alpha=0.75,
-        legend_label="Loss",
-    )
-
-    target.add_tools(
-        HoverTool(
-            renderers=[pos, neg],
-            formatters={"@datetime": "datetime"},
-            tooltips=[
-                ("Date", "@datetime{%F}"),
-                ("P&L", "@pnl{$0,0.00}"),
-            ],
-            mode="vline",
-        ),
-    )
-    target.yaxis.formatter = NumeralTickFormatter(format="$ 0,0")
-
-
-def _replace_monthly_with_daily_returns(layout: Any, daily: pd.DataFrame) -> Any:
-    if daily.empty or not hasattr(layout, "children"):
-        return layout
-
-    try:
-        from bokeh.models import ColumnDataSource
-        from bokeh.models import HoverTool
-        from bokeh.models import NumeralTickFormatter
-        from bokeh.models import Span
-        from bokeh.plotting import figure
-    except ImportError:
-        return layout
-
-    target_index: int | None = None
-    for idx, child in enumerate(layout.children):
-        if hasattr(child, "yaxis"):
-            labels = [axis.axis_label for axis in getattr(child, "yaxis", [])]
-            if any(label == "Monthly Returns" for label in labels):
-                target_index = idx
-                break
-
-    if target_index is None:
-        return layout
-
-    source = ColumnDataSource(
-        {
-            "datetime": pd.to_datetime(daily["datetime"]).to_numpy(dtype="datetime64[ns]"),
-            "ret": daily["ret"].to_numpy(dtype=float),
-            "ret_pos": np.maximum(daily["ret"].to_numpy(dtype=float), 0.0),
-            "ret_neg": np.minimum(daily["ret"].to_numpy(dtype=float), 0.0),
-        },
-    )
-
-    fig = figure(
-        title="Daily Returns (%)",
-        x_axis_type="datetime",
-        height=130,
-        tools="xpan,xwheel_zoom,box_zoom,undo,redo,reset,save",
-        active_drag="xpan",
-        active_scroll="xwheel_zoom",
-        sizing_mode="stretch_width",
-        toolbar_location="right",
-    )
-    fig.add_layout(
-        Span(
-            location=0.0,
-            dimension="width",
-            line_color="#666666",
-            line_dash="dashed",
-            line_width=1,
-        ),
-    )
-
-    day_ms = 24 * 60 * 60 * 1000
-    pos = fig.vbar(
-        x="datetime",
-        top="ret_pos",
-        source=source,
-        width=day_ms * 0.8,
-        color="#2ecc71",
-        alpha=0.75,
-        legend_label="Positive",
-    )
-    neg = fig.vbar(
-        x="datetime",
-        top="ret_neg",
-        source=source,
-        width=day_ms * 0.8,
-        color="#e74c3c",
-        alpha=0.75,
-        legend_label="Negative",
-    )
-
-    fig.add_tools(
-        HoverTool(
-            renderers=[pos, neg],
-            formatters={"@datetime": "datetime"},
-            tooltips=[
-                ("Date", "@datetime{%F}"),
-                ("Return", "@ret{+0.00%}"),
-            ],
-            mode="vline",
-        ),
-    )
-
-    fig.yaxis.axis_label = "Daily Return"
-    fig.yaxis.formatter = NumeralTickFormatter(format="+0.0%")
-    fig.legend.location = "top_left"
-    fig.legend.click_policy = "hide"
-
-    children = list(layout.children)
-    children[target_index] = fig
-    layout.children = children
-    return layout
-
-
-def _remove_periodic_pnl_panel(layout: Any) -> Any:
-    """
-    Remove the periodic/daily P&L panel.
-
-    Daily returns already capture day-over-day performance and this avoids
-    duplicated information.
-    """
-    keywords = ("periodic", "p&l (daily)")
-
-    for node in _iter_layout_nodes(layout):
-        children = getattr(node, "children", None)
-        if children is None:
-            continue
-
-        new_children: list[Any] = []
-        changed = False
-        for child in children:
-            obj = child[0] if isinstance(child, tuple) else child
-            labels = [str(axis.axis_label or "") for axis in getattr(obj, "yaxis", [])]
-            lower_labels = " ".join(labels).lower()
-            if any(keyword in lower_labels for keyword in keywords):
+    for tool in list(tools):
+        proxy_tools = getattr(tool, "tools", None)
+        if proxy_tools is not None:
+            remaining_proxy_tools = [proxy_tool for proxy_tool in list(proxy_tools) if proxy_tool not in tools_to_remove]
+            if len(remaining_proxy_tools) != len(proxy_tools):
+                tool.tools = remaining_proxy_tools
+                changed = True
+            if not remaining_proxy_tools:
                 changed = True
                 continue
-            new_children.append(child)
 
-        if changed:
-            node.children = new_children
+        if tool in tools_to_remove:
+            changed = True
+            continue
 
+        filtered_tools.append(tool)
+
+    if changed:
+        container.tools = filtered_tools
+
+
+def _remove_tools_from_layout(layout: Any, tools_to_remove: set[Any]) -> None:
+    if not tools_to_remove:
+        return
+
+    for node in _iter_layout_nodes(layout):
+        _filter_tool_container(node, tools_to_remove)
+        _filter_tool_container(getattr(node, "toolbar", None), tools_to_remove)
+
+
+def _remove_hover_tools(fig: Any, *, layout: Any | None = None) -> set[Any]:
+    removed = {
+        tool
+        for tool in getattr(fig, "tools", [])
+        if tool.__class__.__name__ == "HoverTool"
+    }
+    if not removed:
+        return set()
+
+    fig.tools = [tool for tool in getattr(fig, "tools", []) if tool not in removed]
+    _filter_tool_container(getattr(fig, "toolbar", None), removed)
+    if layout is not None:
+        _remove_tools_from_layout(layout, removed)
+    return removed
+
+
+def _format_period_label(start: Any, end: Any) -> str:
+    start_dt = _to_naive_utc(start)
+    end_dt = _to_naive_utc(end)
+    if start_dt is None or end_dt is None:
+        return ""
+
+    if start_dt.date() == end_dt.date():
+        return start_dt.strftime("%b %d, %Y")
+    if start_dt.year == end_dt.year and start_dt.month == end_dt.month:
+        return f"{start_dt.strftime('%b %d')} - {end_dt.strftime('%d, %Y')}"
+    return f"{start_dt.strftime('%b %d, %Y')} - {end_dt.strftime('%b %d, %Y')}"
+
+
+def _remove_data_banner(layout: Any) -> Any:
+    for node in _iter_layout_nodes(layout):
+        children = getattr(node, "children", None)
+        if not children:
+            continue
+
+        filtered_children: list[Any] = []
+        for child in children:
+            obj = child[0] if isinstance(child, tuple) else child
+            text = getattr(obj, "text", "")
+            if isinstance(text, str) and "<b>Data:</b>" in text:
+                continue
+            filtered_children.append(child)
+
+        if len(filtered_children) != len(children):
+            node.children = filtered_children
     return layout
 
 
@@ -1287,6 +1155,148 @@ def _remove_yes_price_profitability_connectors(layout: Any) -> None:
         yes_fig.renderers = [r for r in yes_fig.renderers if r not in renderers_to_drop]
 
 
+def _standardize_periodic_pnl_panel(layout: Any) -> None:
+    try:
+        from bokeh.models import ColumnDataSource
+        from bokeh.models import HoverTool
+        from bokeh.models import NumeralTickFormatter
+    except ImportError:
+        return
+
+    target = None
+    for fig in _iter_figures(layout):
+        labels = [str(axis.axis_label or "") for axis in getattr(fig, "yaxis", [])]
+        if any("periodic" in label.lower() for label in labels):
+            target = fig
+            break
+
+    if target is None:
+        return
+
+    source_data: dict[str, Any] | None = None
+    bar_width: float | None = None
+    for renderer in getattr(target, "renderers", []):
+        source = getattr(renderer, "data_source", None)
+        data = getattr(source, "data", None)
+        if isinstance(data, dict) and {"x", "pnl", "dt_start", "dt_end"}.issubset(data):
+            source_data = data
+
+        glyph = getattr(renderer, "glyph", None)
+        width = getattr(glyph, "width", None)
+        if isinstance(width, int | float):
+            bar_width = float(width)
+
+    if source_data is None:
+        return
+
+    x_values = np.asarray(source_data["x"], dtype=float)
+    pnl_values = np.asarray(source_data["pnl"], dtype=float)
+    dt_start = [_to_naive_utc(value) for value in source_data["dt_start"]]
+    dt_end = [_to_naive_utc(value) for value in source_data["dt_end"]]
+    if not len(x_values) or len(x_values) != len(pnl_values):
+        return
+
+    if bar_width is None:
+        diffs = np.diff(np.sort(x_values))
+        bar_width = max(1.0, float(np.median(diffs)) * 0.8) if len(diffs) else 1.0
+
+    panel_source = ColumnDataSource(
+        {
+            "x": x_values,
+            "pnl": pnl_values,
+            "dt_start": dt_start,
+            "dt_end": dt_end,
+            "period_label": [_format_period_label(start, end) for start, end in zip(dt_start, dt_end)],
+            "color": np.where(pnl_values >= 0.0, "#2ecc71", "#e74c3c"),
+        },
+    )
+
+    target.renderers = [renderer for renderer in target.renderers if not hasattr(renderer, "data_source")]
+    for legend in getattr(target, "legend", []):
+        legend.items = []
+        legend.visible = False
+    _remove_hover_tools(target, layout=layout)
+
+    renderer = target.vbar(
+        x="x",
+        top="pnl",
+        source=panel_source,
+        width=bar_width,
+        color="color",
+        alpha=0.75,
+    )
+    target.add_tools(
+        HoverTool(
+            renderers=[renderer],
+            formatters={"@dt_start": "datetime", "@dt_end": "datetime"},
+            tooltips=[
+                ("Period", "@period_label"),
+                ("Start", "@dt_start{%F %T}"),
+                ("End", "@dt_end{%F %T}"),
+                ("P&L", "@pnl{$0,0.00}"),
+            ],
+            mode="vline",
+        ),
+    )
+    target.yaxis.formatter = NumeralTickFormatter(format="$ 0,0")
+
+
+def _standardize_yes_price_hover(layout: Any) -> None:
+    try:
+        from bokeh.models import HoverTool
+    except ImportError:
+        return
+
+    target = None
+    for fig in _iter_figures(layout):
+        labels = [str(axis.axis_label or "") for axis in getattr(fig, "yaxis", [])]
+        if any(label == "YES Price" for label in labels):
+            target = fig
+            break
+
+    if target is None:
+        return
+
+    line_renderers: list[Any] = []
+    for renderer in getattr(target, "renderers", []):
+        glyph = getattr(renderer, "glyph", None)
+        if glyph is None or glyph.__class__.__name__ != "Line":
+            continue
+
+        source = getattr(renderer, "data_source", None)
+        data = getattr(source, "data", None)
+        if not isinstance(data, dict) or "datetime" not in data:
+            continue
+
+        y_field = _field_name(getattr(glyph, "y", None))
+        if not y_field or not y_field.startswith("price_"):
+            continue
+
+        renderer.name = y_field
+        line_renderers.append(renderer)
+
+    if not line_renderers:
+        return
+
+    if len(line_renderers) == 1:
+        yes_price_tooltip = f"@{{{line_renderers[0].name}}}{{0.[00]%}}"
+    else:
+        yes_price_tooltip = "@$name{0.[00]%}"
+
+    _remove_hover_tools(target, layout=layout)
+    target.add_tools(
+        HoverTool(
+            renderers=line_renderers,
+            formatters={"@datetime": "datetime"},
+            tooltips=[
+                ("Date", "@datetime{%F %T}"),
+                ("YES Price", yes_price_tooltip),
+            ],
+            mode="vline",
+        ),
+    )
+
+
 def _focus_allocation_panel(layout: Any) -> None:
     try:
         from bokeh.models import Range1d
@@ -1325,16 +1335,27 @@ def _focus_allocation_panel(layout: Any) -> None:
 
 
 def _apply_layout_overrides(layout: Any, initial_cash: float) -> Any:
+    _ = initial_cash  # Keep signature stable for callers and future layout transforms.
     layout = _remove_data_banner(layout)
     _focus_allocation_panel(layout)
     _remove_yes_price_profitability_connectors(layout)
-
-    equity_timeline = _extract_equity_timeline(layout)
-    daily = _build_daily_performance(equity_timeline, initial_cash=initial_cash)
-    layout = _remove_periodic_pnl_panel(layout)
-    layout = _replace_monthly_with_daily_returns(layout, daily)
-
+    _standardize_periodic_pnl_panel(layout)
+    _standardize_yes_price_hover(layout)
     return layout
+
+
+def _save_layout(layout: Any, output_path: Path, title: str) -> None:
+    """
+    Persist the final Bokeh layout after all adapter-level cleanup.
+    """
+    try:
+        from bokeh.io import output_file
+        from bokeh.io import save
+    except ImportError as exc:  # pragma: no cover - runtime dependency
+        raise ImportError("Bokeh is required for legacy chart rendering.") from exc
+
+    output_file(str(output_path), title=title)
+    save(layout, filename=str(output_path), title=title)
 
 
 def create_legacy_backtest_chart(
@@ -1403,6 +1424,7 @@ def create_legacy_backtest_chart(
 
     output_abs = Path(output_path).expanduser().resolve()
     output_abs.parent.mkdir(parents=True, exist_ok=True)
+    chart_title = f"{strategy_name} legacy chart"
 
     layout = plotting_module.plot(
         result,
@@ -1421,13 +1443,15 @@ def create_legacy_backtest_chart(
 
     if not brier_frame.empty:
         layout = _append_brier_panel(layout, brier_frame)
-        try:
-            from bokeh.io import output_file
-            from bokeh.io import save
-        except ImportError as exc:  # pragma: no cover - runtime dependency
-            raise ImportError("Bokeh is required for legacy chart rendering.") from exc
+    else:
+        unavailable_reason = _brier_unavailable_reason(
+            user_probabilities=user_probabilities,
+            market_probabilities=market_probabilities,
+            outcomes=outcomes,
+        )
+        if unavailable_reason is not None:
+            layout = _append_brier_placeholder_panel(layout, unavailable_reason)
 
-        output_file(str(output_abs), title=f"{strategy_name} legacy chart")
-        save(layout, filename=str(output_abs), title=f"{strategy_name} legacy chart")
+    _save_layout(layout, output_abs, chart_title)
 
     return str(output_abs)

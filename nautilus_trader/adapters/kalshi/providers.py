@@ -141,6 +141,7 @@ def _market_dict_to_instrument(market: dict) -> BinaryOption:
         description=market.get("title"),
         ts_event=0,
         ts_init=0,
+        info=market,
     )
 
 
