@@ -99,6 +99,11 @@ CLAUDE.md
 CODEX.md
 GEMINI.md
 
+# Backtest outputs
+/output/
+/*.html
+/kalshi_catalog/
+
 # Nautilus specific
 .ipynb_checkpoints/
 bench_data/

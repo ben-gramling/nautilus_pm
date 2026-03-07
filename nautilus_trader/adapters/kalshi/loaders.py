@@ -23,7 +23,7 @@ import msgspec
 import pandas as pd
 
 from nautilus_trader.adapters.kalshi.providers import KALSHI_REST_BASE
-from nautilus_trader.adapters.kalshi.providers import _market_dict_to_instrument
+from nautilus_trader.adapters.kalshi.providers import market_dict_to_instrument
 from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.core.datetime import secs_to_nanos
 from nautilus_trader.model.data import Bar
@@ -75,6 +75,20 @@ class KalshiDataLoader:
         "Hours1": BarAggregation.HOUR,
         "Days1": BarAggregation.DAY,
     }
+
+    @staticmethod
+    def _normalize_price(raw: int | float | str) -> float:
+        """
+        Normalize a Kalshi price to the 0–1 dollar range.
+
+        The Kalshi API historically returns prices as integer cents (1–99).
+        This helper divides by 100 when the value is >= 1.0 (cent scale),
+        and passes through values already in the 0–1 dollar range.  This
+        makes the conversion safe across both the current integer format and
+        the new decimal format introduced after March 5, 2026.
+        """
+        p = float(raw)
+        return p / 100.0 if p >= 1.0 else p
 
     def __init__(
         self,
@@ -137,7 +151,7 @@ class KalshiDataLoader:
 
         data = msgspec.json.decode(response.body)
         market = data["market"]
-        instrument = _market_dict_to_instrument(market)
+        instrument = market_dict_to_instrument(market)
 
         event_ticker = market["event_ticker"]
         event_response = await client.get(url=f"{KALSHI_REST_BASE}/events/{event_ticker}")
@@ -307,7 +321,7 @@ class KalshiDataLoader:
             trades.append(
                 TradeTick(
                     instrument_id=instrument_id,
-                    price=make_price(trade["yes_price"]),
+                    price=make_price(self._normalize_price(trade["yes_price"])),
                     size=make_qty(trade["count"]),
                     aggressor_side=aggressor_side,
                     trade_id=trade_id,
@@ -368,10 +382,10 @@ class KalshiDataLoader:
             bars.append(
                 Bar(
                     bar_type=bar_type,
-                    open=make_price(price["open"]),
-                    high=make_price(price["high"]),
-                    low=make_price(price["low"]),
-                    close=make_price(price["close"]),
+                    open=make_price(self._normalize_price(price["open"])),
+                    high=make_price(self._normalize_price(price["high"])),
+                    low=make_price(self._normalize_price(price["low"])),
+                    close=make_price(self._normalize_price(price["close"])),
                     volume=make_qty(candle["volume"]),
                     ts_event=ts_event,
                     ts_init=ts_event,

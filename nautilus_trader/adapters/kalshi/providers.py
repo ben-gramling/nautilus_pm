@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import decimal
 import logging
+import math
 from datetime import datetime
 
 from nautilus_trader.adapters.kalshi.config import KalshiDataClientConfig
@@ -35,8 +36,67 @@ _log = logging.getLogger(__name__)
 
 KALSHI_REST_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
+# Default Kalshi taker fee rate: 7% of expected earnings.
+# Some markets may have different rates or fee waivers.
+# See: https://kalshi.com/docs/kalshi-fee-schedule.pdf
+KALSHI_TAKER_FEE_RATE = decimal.Decimal("0.07")
 
-def _market_dict_to_instrument(market: dict) -> BinaryOption:
+# Kalshi maker fee rate.  Most markets have zero maker fees; markets that
+# do charge a maker fee are noted in the fee schedule PDF.  Set to zero by
+# default; override per-market via ``fee_waiver_expiration_time`` check.
+KALSHI_MAKER_FEE_RATE = decimal.Decimal("0")
+
+
+def calculate_kalshi_commission(
+    quantity: decimal.Decimal,
+    price: decimal.Decimal,
+    fee_rate: decimal.Decimal = KALSHI_TAKER_FEE_RATE,
+) -> decimal.Decimal:
+    """
+    Calculate Kalshi transaction fee.
+
+    Kalshi charges a variable percentage of the expected earnings on each
+    contract, rounded **up** to the next cent::
+
+        fee = ceil_to_cent(fee_rate × C × P × (1 - P))
+
+    Where:
+    - C = number of contracts (quantity)
+    - P = contract price in USD (0 to 1)
+    - fee_rate = 0.07 (7%) for the standard taker fee schedule
+
+    The fee peaks at P = 0.50 and decreases symmetrically toward the
+    extremes (P → 0 or P → 1).  At P = 0.50, the effective rate is
+    ~1.75% of notional (= 0.07 × 0.25).
+
+    References
+    ----------
+    https://kalshi.com/docs/kalshi-fee-schedule.pdf
+    https://help.kalshi.com/en/articles/13823805-fees
+
+    Parameters
+    ----------
+    quantity : Decimal
+        The number of contracts.
+    price : Decimal
+        The contract price in USD (0 to 1).
+    fee_rate : Decimal, default 0.07
+        The fee rate applied to expected earnings.
+
+    Returns
+    -------
+    Decimal
+        The fee amount, rounded up to the nearest cent.
+
+    """
+    if fee_rate <= 0 or price <= 0 or price >= 1:
+        return decimal.Decimal(0)
+    raw_fee = float(fee_rate * quantity * price * (1 - price))
+    # Round up to the next cent (Kalshi rounds up)
+    return decimal.Decimal(str(math.ceil(raw_fee * 100) / 100))
+
+
+def market_dict_to_instrument(market: dict) -> BinaryOption:
     """Convert a Kalshi market dict to a NautilusTrader ``BinaryOption``."""
     ticker = market["ticker"]
     venue = Venue("KALSHI")
@@ -47,6 +107,20 @@ def _market_dict_to_instrument(market: dict) -> BinaryOption:
             return 0
         dt = datetime.fromisoformat(s)
         return dt_to_unix_nanos(dt)
+
+    # Check if this market has a fee waiver that is still active
+    fee_waiver = market.get("fee_waiver_expiration_time")
+    if fee_waiver:
+        try:
+            waiver_dt = datetime.fromisoformat(fee_waiver)
+            if waiver_dt > datetime.now(waiver_dt.tzinfo):
+                taker_fee = decimal.Decimal(0)
+            else:
+                taker_fee = KALSHI_TAKER_FEE_RATE
+        except (ValueError, TypeError):
+            taker_fee = KALSHI_TAKER_FEE_RATE
+    else:
+        taker_fee = KALSHI_TAKER_FEE_RATE
 
     return BinaryOption(
         instrument_id=instrument_id,
@@ -61,8 +135,8 @@ def _market_dict_to_instrument(market: dict) -> BinaryOption:
         size_precision=2,
         price_increment=Price.from_str("0.0001"),
         size_increment=Quantity.from_str("0.01"),
-        maker_fee=decimal.Decimal(0),
-        taker_fee=decimal.Decimal(0),
+        maker_fee=KALSHI_MAKER_FEE_RATE,
+        taker_fee=taker_fee,
         outcome="Yes",
         description=market.get("title"),
         ts_event=0,
@@ -189,4 +263,4 @@ class KalshiInstrumentProvider(InstrumentProvider):
 
     def _market_to_instrument(self, market: dict) -> BinaryOption:
         """Convert a Kalshi market dict to a NautilusTrader ``BinaryOption``."""
-        return _market_dict_to_instrument(market)
+        return market_dict_to_instrument(market)
