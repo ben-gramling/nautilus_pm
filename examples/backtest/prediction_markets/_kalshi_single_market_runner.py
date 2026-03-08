@@ -89,10 +89,7 @@ async def run_single_market_bar_backtest(
     start = pd.Timestamp(now - timedelta(days=lookback_days))
     end = pd.Timestamp(now)
 
-    print(
-        f"Loading Kalshi market {market_ticker} "
-        f"({interval}, lookback={lookback_days}d)..."
-    )
+    print(f"Loading Kalshi market {market_ticker} ({interval}, lookback={lookback_days}d)...")
 
     try:
         loader = await KalshiDataLoader.from_market_ticker(market_ticker)
@@ -123,10 +120,7 @@ async def run_single_market_bar_backtest(
     if closes:
         price_range = max(closes) - min(closes)
         if price_range < min_price_range:
-            print(
-                f"Skip {market_ticker}: price range {price_range:.3f} "
-                f"< {min_price_range:.3f}"
-            )
+            print(f"Skip {market_ticker}: price range {price_range:.3f} < {min_price_range:.3f}")
             return
 
     if not bars:

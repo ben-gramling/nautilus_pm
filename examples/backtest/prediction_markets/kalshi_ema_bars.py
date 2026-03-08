@@ -87,7 +87,7 @@ START = os.getenv(
 END = os.getenv("END", _NOW_UTC.strftime("%Y-%m-%d"))
 FAST_EMA = 10
 SLOW_EMA = 20
-TRADE_SIZE = Decimal("1")          # Number of contracts per trade  # noqa: FURB157
+TRADE_SIZE = Decimal("1")  # Number of contracts per trade  # noqa: FURB157
 
 
 def _bar_spec_for_interval(interval: str) -> str:

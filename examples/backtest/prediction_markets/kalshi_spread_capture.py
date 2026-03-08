@@ -55,6 +55,7 @@ TRADE_SIZE = Decimal(1)
 INITIAL_CASH = float(os.getenv("INITIAL_CASH", str(DEFAULT_INITIAL_CASH)))
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 async def run() -> None:
     await run_single_market_bar_backtest(
         name=NAME,

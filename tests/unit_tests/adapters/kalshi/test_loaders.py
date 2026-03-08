@@ -258,7 +258,9 @@ def test_parse_trades_prefers_current_kalshi_payload_fields():
 def test_parse_trades_generates_unique_ids_without_trade_id():
     ticker = "KXNEXTIRANLEADER-45JAN01-MKHA-LONGSUFFIX"
     instrument = make_instrument(ticker=ticker)
-    loader = KalshiDataLoader(instrument=instrument, series_ticker="KXNEXTIRANLEADER", http_client=MagicMock())
+    loader = KalshiDataLoader(
+        instrument=instrument, series_ticker="KXNEXTIRANLEADER", http_client=MagicMock()
+    )
 
     raw = [
         make_trade_dict(ts=1700000000, yes_price="0.4200", count="10.00"),
@@ -289,17 +291,15 @@ async def test_load_trades_filters_by_time_range():
     instrument = make_instrument()
     mock_client = MagicMock()
     raw = [
-        make_trade_dict(ts=1000),   # before start - excluded
-        make_trade_dict(ts=2000),   # in range - included
-        make_trade_dict(ts=3000),   # after end - excluded
+        make_trade_dict(ts=1000),  # before start - excluded
+        make_trade_dict(ts=2000),  # in range - included
+        make_trade_dict(ts=3000),  # after end - excluded
     ]
-    mock_client.get = AsyncMock(
-        return_value=make_mock_response({"trades": raw, "cursor": ""})
-    )
+    mock_client.get = AsyncMock(return_value=make_mock_response({"trades": raw, "cursor": ""}))
     loader = KalshiDataLoader(instrument=instrument, series_ticker="KXBTC", http_client=mock_client)
 
     start = pd.Timestamp(1500, unit="s", tz="UTC")  # ts=1000 is excluded
-    end = pd.Timestamp(2000, unit="s", tz="UTC")    # ts=2000 is included
+    end = pd.Timestamp(2000, unit="s", tz="UTC")  # ts=2000 is included
 
     ticks = await loader.load_trades(start=start, end=end)
 

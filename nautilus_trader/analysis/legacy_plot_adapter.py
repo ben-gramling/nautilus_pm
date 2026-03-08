@@ -343,7 +343,7 @@ def _disable_legacy_downsampling(plotting_module: Any) -> None:
     if downsample_fn is None:
         return
 
-    def _identity_downsample(eq, fills_df, market_df, max_points=5000, alloc_df=None):  # noqa: ANN001
+    def _identity_downsample(eq, fills_df, market_df, max_points=5000, alloc_df=None):
         return eq, fills_df, market_df, alloc_df
 
     plotting_module._downsample = _identity_downsample
@@ -426,9 +426,7 @@ def _convert_fills(fills_report: pd.DataFrame, models_module: Any) -> list[Any]:
 
         action_raw = str(_first_value(row, "order_side", "action", "side") or "").upper()
         action = (
-            models_module.OrderAction.BUY
-            if action_raw == "BUY"
-            else models_module.OrderAction.SELL
+            models_module.OrderAction.BUY if action_raw == "BUY" else models_module.OrderAction.SELL
         )
 
         side = _infer_market_side(models_module, market_id)
@@ -445,8 +443,7 @@ def _convert_fills(fills_report: pd.DataFrame, models_module: Any) -> list[Any]:
             default=0.0,
         )
         order_id = str(
-            _first_value(row, "order_id", "client_order_id", "venue_order_id")
-            or f"fill-{idx}",
+            _first_value(row, "order_id", "client_order_id", "venue_order_id") or f"fill-{idx}",
         )
 
         converted.append(
@@ -758,8 +755,7 @@ def _normalize_market_prices(
         frame = pd.DataFrame(values, columns=["ts", "price"]).sort_values("ts")
         frame = frame.drop_duplicates(subset=["ts"], keep="last")
         normalized[str(market_id)] = [
-            (row.ts.to_pydatetime(), float(row.price))
-            for row in frame.itertuples(index=False)
+            (row.ts.to_pydatetime(), float(row.price)) for row in frame.itertuples(index=False)
         ]
 
     return normalized
@@ -768,7 +764,9 @@ def _normalize_market_prices(
 def _market_prices_from_fills(fills: list[Any]) -> dict[str, list[tuple[datetime, float]]]:
     market_prices: dict[str, list[tuple[datetime, float]]] = {}
     for fill in fills:
-        market_prices.setdefault(str(fill.market_id), []).append((fill.timestamp, float(fill.price)))
+        market_prices.setdefault(str(fill.market_id), []).append(
+            (fill.timestamp, float(fill.price))
+        )
     return market_prices
 
 
@@ -1030,7 +1028,9 @@ def _filter_tool_container(container: Any, tools_to_remove: set[Any]) -> None:
     for tool in list(tools):
         proxy_tools = getattr(tool, "tools", None)
         if proxy_tools is not None:
-            remaining_proxy_tools = [proxy_tool for proxy_tool in list(proxy_tools) if proxy_tool not in tools_to_remove]
+            remaining_proxy_tools = [
+                proxy_tool for proxy_tool in list(proxy_tools) if proxy_tool not in tools_to_remove
+            ]
             if len(remaining_proxy_tools) != len(proxy_tools):
                 tool.tools = remaining_proxy_tools
                 changed = True
@@ -1058,11 +1058,7 @@ def _remove_tools_from_layout(layout: Any, tools_to_remove: set[Any]) -> None:
 
 
 def _remove_hover_tools(fig: Any, *, layout: Any | None = None) -> set[Any]:
-    removed = {
-        tool
-        for tool in getattr(fig, "tools", [])
-        if tool.__class__.__name__ == "HoverTool"
-    }
+    removed = {tool for tool in getattr(fig, "tools", []) if tool.__class__.__name__ == "HoverTool"}
     if not removed:
         return set()
 
@@ -1084,6 +1080,82 @@ def _format_period_label(start: Any, end: Any) -> str:
     if start_dt.year == end_dt.year and start_dt.month == end_dt.month:
         return f"{start_dt.strftime('%b %d')} - {end_dt.strftime('%d, %Y')}"
     return f"{start_dt.strftime('%b %d, %Y')} - {end_dt.strftime('%b %d, %Y')}"
+
+
+def _find_figure_with_yaxis_label(layout: Any, predicate: Any) -> Any | None:
+    for fig in _iter_figures(layout):
+        labels = [str(axis.axis_label or "") for axis in getattr(fig, "yaxis", [])]
+        if any(predicate(label) for label in labels):
+            return fig
+    return None
+
+
+def _periodic_pnl_panel_source(target: Any) -> tuple[dict[str, Any] | None, float | None]:
+    source_data: dict[str, Any] | None = None
+    bar_width: float | None = None
+
+    for renderer in getattr(target, "renderers", []):
+        source = getattr(renderer, "data_source", None)
+        data = getattr(source, "data", None)
+        if isinstance(data, dict) and {"x", "pnl", "dt_start", "dt_end"}.issubset(data):
+            source_data = data
+
+        glyph = getattr(renderer, "glyph", None)
+        width = getattr(glyph, "width", None)
+        if isinstance(width, int | float):
+            bar_width = float(width)
+
+    return source_data, bar_width
+
+
+def _build_periodic_pnl_panel_source_data(source_data: dict[str, Any]) -> dict[str, Any] | None:
+    x_values = np.asarray(source_data["x"], dtype=float)
+    pnl_values = np.asarray(source_data["pnl"], dtype=float)
+    dt_start = [_to_naive_utc(value) for value in source_data["dt_start"]]
+    dt_end = [_to_naive_utc(value) for value in source_data["dt_end"]]
+    if not len(x_values) or len(x_values) != len(pnl_values):
+        return None
+
+    return {
+        "x": x_values,
+        "pnl": pnl_values,
+        "dt_start": dt_start,
+        "dt_end": dt_end,
+        "period_label": [
+            _format_period_label(start, end) for start, end in zip(dt_start, dt_end, strict=False)
+        ],
+        "color": np.where(pnl_values >= 0.0, "#2ecc71", "#e74c3c"),
+    }
+
+
+def _resolve_periodic_pnl_bar_width(x_values: np.ndarray, bar_width: float | None) -> float:
+    if bar_width is not None:
+        return bar_width
+
+    diffs = np.diff(np.sort(x_values))
+    return max(1.0, float(np.median(diffs)) * 0.8) if len(diffs) else 1.0
+
+
+def _yes_price_line_renderers(target: Any) -> list[Any]:
+    renderers: list[Any] = []
+    for renderer in getattr(target, "renderers", []):
+        glyph = getattr(renderer, "glyph", None)
+        if glyph is None or glyph.__class__.__name__ != "Line":
+            continue
+
+        source = getattr(renderer, "data_source", None)
+        data = getattr(source, "data", None)
+        if not isinstance(data, dict) or "datetime" not in data:
+            continue
+
+        y_field = _field_name(getattr(glyph, "y", None))
+        if not y_field or not y_field.startswith("price_"):
+            continue
+
+        renderer.name = y_field
+        renderers.append(renderer)
+
+    return renderers
 
 
 def _remove_data_banner(layout: Any) -> Any:
@@ -1163,55 +1235,24 @@ def _standardize_periodic_pnl_panel(layout: Any) -> None:
     except ImportError:
         return
 
-    target = None
-    for fig in _iter_figures(layout):
-        labels = [str(axis.axis_label or "") for axis in getattr(fig, "yaxis", [])]
-        if any("periodic" in label.lower() for label in labels):
-            target = fig
-            break
-
+    target = _find_figure_with_yaxis_label(layout, lambda label: "periodic" in label.lower())
     if target is None:
         return
 
-    source_data: dict[str, Any] | None = None
-    bar_width: float | None = None
-    for renderer in getattr(target, "renderers", []):
-        source = getattr(renderer, "data_source", None)
-        data = getattr(source, "data", None)
-        if isinstance(data, dict) and {"x", "pnl", "dt_start", "dt_end"}.issubset(data):
-            source_data = data
-
-        glyph = getattr(renderer, "glyph", None)
-        width = getattr(glyph, "width", None)
-        if isinstance(width, int | float):
-            bar_width = float(width)
-
+    source_data, bar_width = _periodic_pnl_panel_source(target)
     if source_data is None:
         return
 
-    x_values = np.asarray(source_data["x"], dtype=float)
-    pnl_values = np.asarray(source_data["pnl"], dtype=float)
-    dt_start = [_to_naive_utc(value) for value in source_data["dt_start"]]
-    dt_end = [_to_naive_utc(value) for value in source_data["dt_end"]]
-    if not len(x_values) or len(x_values) != len(pnl_values):
+    panel_data = _build_periodic_pnl_panel_source_data(source_data)
+    if panel_data is None:
         return
 
-    if bar_width is None:
-        diffs = np.diff(np.sort(x_values))
-        bar_width = max(1.0, float(np.median(diffs)) * 0.8) if len(diffs) else 1.0
+    panel_source = ColumnDataSource(panel_data)
+    bar_width = _resolve_periodic_pnl_bar_width(panel_data["x"], bar_width)
 
-    panel_source = ColumnDataSource(
-        {
-            "x": x_values,
-            "pnl": pnl_values,
-            "dt_start": dt_start,
-            "dt_end": dt_end,
-            "period_label": [_format_period_label(start, end) for start, end in zip(dt_start, dt_end)],
-            "color": np.where(pnl_values >= 0.0, "#2ecc71", "#e74c3c"),
-        },
-    )
-
-    target.renderers = [renderer for renderer in target.renderers if not hasattr(renderer, "data_source")]
+    target.renderers = [
+        renderer for renderer in target.renderers if not hasattr(renderer, "data_source")
+    ]
     for legend in getattr(target, "legend", []):
         legend.items = []
         legend.visible = False
@@ -1247,33 +1288,11 @@ def _standardize_yes_price_hover(layout: Any) -> None:
     except ImportError:
         return
 
-    target = None
-    for fig in _iter_figures(layout):
-        labels = [str(axis.axis_label or "") for axis in getattr(fig, "yaxis", [])]
-        if any(label == "YES Price" for label in labels):
-            target = fig
-            break
-
+    target = _find_figure_with_yaxis_label(layout, lambda label: label == "YES Price")
     if target is None:
         return
 
-    line_renderers: list[Any] = []
-    for renderer in getattr(target, "renderers", []):
-        glyph = getattr(renderer, "glyph", None)
-        if glyph is None or glyph.__class__.__name__ != "Line":
-            continue
-
-        source = getattr(renderer, "data_source", None)
-        data = getattr(source, "data", None)
-        if not isinstance(data, dict) or "datetime" not in data:
-            continue
-
-        y_field = _field_name(getattr(glyph, "y", None))
-        if not y_field or not y_field.startswith("price_"):
-            continue
-
-        renderer.name = y_field
-        line_renderers.append(renderer)
+    line_renderers = _yes_price_line_renderers(target)
 
     if not line_renderers:
         return

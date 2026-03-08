@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -125,7 +126,10 @@ def test_standardize_periodic_pnl_panel_replaces_dual_hover_with_single_bar_rend
             "pnl_pos": [7.5, 0.0],
             "pnl_neg": [0.0, -3.25],
             "pnl": [7.5, -3.25],
-            "dt_start": [pd.Timestamp("2026-03-02T14:05:00Z"), pd.Timestamp("2026-03-03T11:00:00Z")],
+            "dt_start": [
+                pd.Timestamp("2026-03-02T14:05:00Z"),
+                pd.Timestamp("2026-03-03T11:00:00Z"),
+            ],
             "dt_end": [pd.Timestamp("2026-03-02T18:45:00Z"), pd.Timestamp("2026-03-03T17:30:00Z")],
         },
     )
@@ -205,7 +209,10 @@ def test_standardize_yes_price_hover_shows_timestamp_and_yes_price() -> None:
     source = bokeh_models.ColumnDataSource(
         {
             "index": [0, 1],
-            "datetime": [pd.Timestamp("2026-03-02T14:05:00Z"), pd.Timestamp("2026-03-02T14:10:00Z")],
+            "datetime": [
+                pd.Timestamp("2026-03-02T14:05:00Z"),
+                pd.Timestamp("2026-03-02T14:10:00Z"),
+            ],
             "price_test_market": [0.48, 0.52],
         },
     )
@@ -245,7 +252,9 @@ def test_append_brier_panel_uses_left_axis_label_instead_of_top_title() -> None:
 def test_append_brier_placeholder_panel_uses_left_axis_label_instead_of_top_title() -> None:
     layout = _DummyLayout()
 
-    result = adapter._append_brier_placeholder_panel(layout, "Unavailable until the market resolves.")
+    result = adapter._append_brier_placeholder_panel(
+        layout, "Unavailable until the market resolves."
+    )
 
     assert result is layout
     assert len(layout.children) == 1
@@ -271,10 +280,11 @@ def test_create_legacy_backtest_chart_saves_final_layout_without_requiring_brier
             self.kwargs = kwargs
 
     engine = SimpleNamespace(
-        trader=SimpleNamespace(generate_order_fills_report=lambda: []),
+        trader=SimpleNamespace(generate_order_fills_report=list),
     )
 
-    monkeypatch.setattr(adapter, "resolve_legacy_plot_repo", lambda *_: Path("/tmp/legacy"))
+    legacy_repo = tmp_path / "legacy_repo"
+    monkeypatch.setattr(adapter, "resolve_legacy_plot_repo", lambda *_: legacy_repo)
     monkeypatch.setattr(
         adapter,
         "_load_legacy_modules",
@@ -293,8 +303,8 @@ def test_create_legacy_backtest_chart_saves_final_layout_without_requiring_brier
         adapter,
         "_build_dense_portfolio_snapshots",
         lambda *args, **kwargs: [
-            SimpleNamespace(timestamp=datetime(2025, 1, 1), total_equity=100.0),
-            SimpleNamespace(timestamp=datetime(2025, 1, 2), total_equity=125.0),
+            SimpleNamespace(timestamp=datetime(2025, 1, 1, tzinfo=UTC), total_equity=100.0),
+            SimpleNamespace(timestamp=datetime(2025, 1, 2, tzinfo=UTC), total_equity=125.0),
         ],
     )
     monkeypatch.setattr(adapter, "_build_metrics", lambda *args, **kwargs: {})
@@ -354,10 +364,11 @@ def test_create_legacy_backtest_chart_saves_placeholder_brier_panel_when_outcome
             self.kwargs = kwargs
 
     engine = SimpleNamespace(
-        trader=SimpleNamespace(generate_order_fills_report=lambda: []),
+        trader=SimpleNamespace(generate_order_fills_report=list),
     )
 
-    monkeypatch.setattr(adapter, "resolve_legacy_plot_repo", lambda *_: Path("/tmp/legacy"))
+    legacy_repo = tmp_path / "legacy_repo"
+    monkeypatch.setattr(adapter, "resolve_legacy_plot_repo", lambda *_: legacy_repo)
     monkeypatch.setattr(
         adapter,
         "_load_legacy_modules",
@@ -372,8 +383,8 @@ def test_create_legacy_backtest_chart_saves_placeholder_brier_panel_when_outcome
         adapter,
         "_build_dense_portfolio_snapshots",
         lambda *args, **kwargs: [
-            SimpleNamespace(timestamp=datetime(2025, 1, 1), total_equity=100.0),
-            SimpleNamespace(timestamp=datetime(2025, 1, 2), total_equity=125.0),
+            SimpleNamespace(timestamp=datetime(2025, 1, 1, tzinfo=UTC), total_equity=100.0),
+            SimpleNamespace(timestamp=datetime(2025, 1, 2, tzinfo=UTC), total_equity=125.0),
         ],
     )
     monkeypatch.setattr(adapter, "_build_metrics", lambda *args, **kwargs: {})
@@ -402,8 +413,12 @@ def test_create_legacy_backtest_chart_saves_placeholder_brier_panel_when_outcome
         strategy_name="Test Strategy",
         platform="kalshi",
         initial_cash=100.0,
-        user_probabilities=pd.Series([0.45, 0.55], index=pd.date_range("2025-01-01", periods=2, freq="D")),
-        market_probabilities=pd.Series([0.5, 0.6], index=pd.date_range("2025-01-01", periods=2, freq="D")),
+        user_probabilities=pd.Series(
+            [0.45, 0.55], index=pd.date_range("2025-01-01", periods=2, freq="D")
+        ),
+        market_probabilities=pd.Series(
+            [0.5, 0.6], index=pd.date_range("2025-01-01", periods=2, freq="D")
+        ),
         outcomes=pd.Series(dtype=float),
     )
 

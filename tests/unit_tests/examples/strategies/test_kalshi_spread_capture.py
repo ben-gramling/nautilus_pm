@@ -137,8 +137,7 @@ def _generate_bars(
 ) -> list[Bar]:
     """Generate a list of bars from close prices."""
     return [
-        _make_bar(bar_type, price, start_ns + i * interval_ns)
-        for i, price in enumerate(prices)
+        _make_bar(bar_type, price, start_ns + i * interval_ns) for i, price in enumerate(prices)
     ]
 
 

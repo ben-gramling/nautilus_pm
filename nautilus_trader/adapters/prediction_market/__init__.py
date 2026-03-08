@@ -15,4 +15,3 @@
 """
 Shared prediction-market adapter helpers.
 """
-

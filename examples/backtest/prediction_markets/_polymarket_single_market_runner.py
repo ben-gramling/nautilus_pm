@@ -40,10 +40,7 @@ async def run_single_market_trade_backtest(
     start = pd.Timestamp(now - timedelta(days=lookback_days))
     end = pd.Timestamp(now)
 
-    print(
-        f"Loading Polymarket market {market_slug} "
-        f"(lookback={lookback_days}d)..."
-    )
+    print(f"Loading Polymarket market {market_slug} (lookback={lookback_days}d)...")
 
     try:
         loader = await PolymarketDataLoader.from_market_slug(market_slug)
@@ -60,10 +57,7 @@ async def run_single_market_trade_backtest(
     if prices:
         price_range = max(prices) - min(prices)
         if price_range < min_price_range:
-            print(
-                f"Skip {market_slug}: price range {price_range:.3f} "
-                f"< {min_price_range:.3f}"
-            )
+            print(f"Skip {market_slug}: price range {price_range:.3f} < {min_price_range:.3f}")
             return
 
     if not trades:

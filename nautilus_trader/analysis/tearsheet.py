@@ -1815,11 +1815,7 @@ def _render_allocation(
                 stackgroup="allocation",
                 line={"width": 0.8, "color": palette[i % len(palette)]},
                 line_shape="hv",
-                hovertemplate=(
-                    "<b>%{x}</b><br>"
-                    f"{instrument_id}: "
-                    "%{y:.2f}%<extra></extra>"
-                ),
+                hovertemplate=(f"<b>%{{x}}</b><br>{instrument_id}: %{{y:.2f}}%<extra></extra>"),
                 showlegend=False,
             ),
             row=row,
@@ -2358,10 +2354,7 @@ def _render_bars_with_fills(  # noqa: C901
                         marker_line_width=2,
                         marker_color=positive_color,
                         name="Entries (Buy)",
-                        hovertemplate=(
-                            "<b>%{x}</b><br>"
-                            "Entry Price: %{y:.4f}<extra></extra>"
-                        ),
+                        hovertemplate=("<b>%{x}</b><br>Entry Price: %{y:.4f}<extra></extra>"),
                         showlegend=True,
                     ),
                     row=row,
@@ -2379,10 +2372,7 @@ def _render_bars_with_fills(  # noqa: C901
                         marker_line_width=2,
                         marker_color=negative_color,
                         name="Entries (Sell)",
-                        hovertemplate=(
-                            "<b>%{x}</b><br>"
-                            "Entry Price: %{y:.4f}<extra></extra>"
-                        ),
+                        hovertemplate=("<b>%{x}</b><br>Entry Price: %{y:.4f}<extra></extra>"),
                         showlegend=True,
                     ),
                     row=row,
@@ -2391,8 +2381,7 @@ def _render_bars_with_fills(  # noqa: C901
 
         if "ts_closed" in positions_df.columns and "avg_px_close" in positions_df.columns:
             exits = positions_df[
-                positions_df["ts_closed"].notna()
-                & positions_df["avg_px_close"].notna()
+                positions_df["ts_closed"].notna() & positions_df["avg_px_close"].notna()
             ]
             if not exits.empty:
                 fig.add_trace(
@@ -2405,10 +2394,7 @@ def _render_bars_with_fills(  # noqa: C901
                         marker_line_width=2,
                         marker_color=neutral_color,
                         name="Exits",
-                        hovertemplate=(
-                            "<b>%{x}</b><br>"
-                            "Exit Price: %{y:.4f}<extra></extra>"
-                        ),
+                        hovertemplate=("<b>%{x}</b><br>Exit Price: %{y:.4f}<extra></extra>"),
                         showlegend=True,
                     ),
                     row=row,
@@ -2423,7 +2409,12 @@ def _render_bars_with_fills(  # noqa: C901
             avg_px_open = position.get("avg_px_open")
             avg_px_close = position.get("avg_px_close")
 
-            if pd.isna(ts_opened) or pd.isna(ts_closed) or pd.isna(avg_px_open) or pd.isna(avg_px_close):
+            if (
+                pd.isna(ts_opened)
+                or pd.isna(ts_closed)
+                or pd.isna(avg_px_open)
+                or pd.isna(avg_px_close)
+            ):
                 continue
 
             segment_x.extend([ts_opened, ts_closed, None])

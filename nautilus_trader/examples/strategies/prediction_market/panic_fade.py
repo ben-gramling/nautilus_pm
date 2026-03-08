@@ -98,9 +98,8 @@ class _PanicFadeBase(LongOnlyPredictionMarketStrategy):
         ):
             return
 
-        if (
-            price >= float(self.config.rebound_exit)
-            or self._holding_periods >= int(self.config.max_holding_periods)
+        if price >= float(self.config.rebound_exit) or self._holding_periods >= int(
+            self.config.max_holding_periods
         ):
             self._submit_exit()
 

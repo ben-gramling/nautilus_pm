@@ -81,9 +81,9 @@ class KalshiDataLoader:
     _TRADE_PAGE_LIMIT = 1_000
 
     @staticmethod
-    def _normalize_price(raw: int | float | str) -> float:
+    def _normalize_price(raw: float | str) -> float:
         """
-        Normalize a Kalshi price to the 0–1 dollar range.
+        Normalize a Kalshi price to the 0-1 dollar range.
 
         The Kalshi API historically returned cent-scale integers (for example
         ``42`` for ``0.42``) and now also publishes dollar-scale decimals (for
@@ -95,9 +95,7 @@ class KalshiDataLoader:
         p = float(raw)
 
         has_decimal_marker = isinstance(raw, float) or "." in text or "e" in text.lower()
-        if 0.0 <= p < 1.0:
-            normalized = p
-        elif p == 1.0 and has_decimal_marker:
+        if 0.0 <= p < 1.0 or (p == 1.0 and has_decimal_marker):
             normalized = p
         else:
             normalized = p / 100.0
@@ -129,7 +127,9 @@ class KalshiDataLoader:
         raise KeyError(f"Kalshi trade payload missing a yes-price field: {trade}")
 
     @staticmethod
-    def _extract_quantity(payload: dict[str, Any], *, fp_key: str, raw_key: str) -> str | int | float:
+    def _extract_quantity(
+        payload: dict[str, Any], *, fp_key: str, raw_key: str
+    ) -> str | int | float:
         if payload.get(fp_key) is not None:
             return payload[fp_key]
         return payload[raw_key]
@@ -408,7 +408,9 @@ class KalshiDataLoader:
                 TradeTick(
                     instrument_id=instrument_id,
                     price=make_price(self._extract_yes_price(trade)),
-                    size=make_qty(self._extract_quantity(trade, fp_key="count_fp", raw_key="count")),
+                    size=make_qty(
+                        self._extract_quantity(trade, fp_key="count_fp", raw_key="count")
+                    ),
                     aggressor_side=aggressor_side,
                     trade_id=trade_id,
                     ts_event=ts_event,

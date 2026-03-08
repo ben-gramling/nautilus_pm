@@ -142,31 +142,20 @@ def _probability_frame(points: Sequence[PricePoint]) -> pd.DataFrame:
     return frame
 
 
-def infer_realized_outcome(source: object | None) -> float | None:
-    """
-    Infer a realized binary outcome from instrument metadata when available.
-    """
-    if source is None:
-        return None
-
-    info = getattr(source, "info", source)
-    if not isinstance(info, Mapping):
-        return None
-
-    if info.get("is_50_50_outcome") is True:
-        return 0.5
-
-    outcome_name = str(getattr(source, "outcome", "")).strip().casefold()
-
-    # Kalshi publishes the resolved side directly on the market payload.
+def _resolved_outcome_from_result(info: Mapping[object, object], outcome_name: str) -> float | None:
     result = str(info.get("result", "")).strip().casefold()
-    if result in {"yes", "no"}:
-        if outcome_name == "yes":
-            return 1.0 if result == "yes" else 0.0
-        if outcome_name == "no":
-            return 1.0 if result == "no" else 0.0
+    if result not in {"yes", "no"}:
+        return None
 
-    # Some binary markets expose a numeric expiration/settlement value.
+    if outcome_name == "yes":
+        return 1.0 if result == "yes" else 0.0
+    if outcome_name == "no":
+        return 1.0 if result == "no" else 0.0
+
+    return None
+
+
+def _resolved_outcome_from_numeric_fields(info: Mapping[object, object]) -> float | None:
     for key in ("settlement_value", "expiration_value"):
         raw_value = info.get(key)
         if raw_value in (None, ""):
@@ -182,11 +171,15 @@ def infer_realized_outcome(source: object | None) -> float | None:
         if numeric_value in {0.0, 100.0}:
             return numeric_value / 100.0
 
-    tokens = info.get("tokens")
-    if not isinstance(tokens, Sequence):
-        return None
+    return None
 
-    if not outcome_name:
+
+def _resolved_outcome_from_tokens(
+    info: Mapping[object, object],
+    outcome_name: str,
+) -> float | None:
+    tokens = info.get("tokens")
+    if not isinstance(tokens, Sequence) or not outcome_name:
         return None
 
     for token in tokens:
@@ -198,6 +191,34 @@ def infer_realized_outcome(source: object | None) -> float | None:
         winner = token.get("winner")
         if isinstance(winner, bool):
             return float(winner)
+
+    return None
+
+
+def infer_realized_outcome(source: object | None) -> float | None:
+    """
+    Infer a realized binary outcome from instrument metadata when available.
+    """
+    if source is None:
+        return None
+
+    info = getattr(source, "info", source)
+    if not isinstance(info, Mapping):
+        return None
+
+    if info.get("is_50_50_outcome") is True:
+        return 0.5
+
+    outcome_name = str(getattr(source, "outcome", "")).strip().casefold()
+    resolvers = (
+        lambda: _resolved_outcome_from_result(info, outcome_name),
+        lambda: _resolved_outcome_from_numeric_fields(info),
+        lambda: _resolved_outcome_from_tokens(info, outcome_name),
+    )
+    for resolver in resolvers:
+        resolved = resolver()
+        if resolved is not None:
+            return resolved
 
     return None
 
@@ -219,10 +240,7 @@ def build_brier_inputs(
         return empty, empty, empty
 
     frame["user_probability"] = (
-        frame["market_probability"]
-        .rolling(window=window, min_periods=window)
-        .mean()
-        .clip(0.0, 1.0)
+        frame["market_probability"].rolling(window=window, min_periods=window).mean().clip(0.0, 1.0)
     )
     frame = frame.dropna(subset=["user_probability", "market_probability"])
     if frame.empty:
@@ -272,11 +290,5 @@ def build_market_prices(
     frame = pd.DataFrame(output, columns=["ts", "price"]).sort_values("ts")
     frame = frame.drop_duplicates(subset=["ts"], keep="last")
     if resample_rule:
-        frame = (
-            frame.set_index("ts")
-            .resample(resample_rule)
-            .last()
-            .dropna()
-            .reset_index()
-        )
+        frame = frame.set_index("ts").resample(resample_rule).last().dropna().reset_index()
     return [(row.ts.to_pydatetime(), float(row.price)) for row in frame.itertuples(index=False)]

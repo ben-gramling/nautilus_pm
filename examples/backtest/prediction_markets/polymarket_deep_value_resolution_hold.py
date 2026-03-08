@@ -30,18 +30,14 @@ from nautilus_trader.analysis.legacy_plot_adapter import create_legacy_backtest_
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.config import LoggingConfig
+from nautilus_trader.examples.strategies.prediction_market import TradeTickDeepValueHoldConfig
+from nautilus_trader.examples.strategies.prediction_market import TradeTickDeepValueHoldStrategy
 from nautilus_trader.model.currencies import USDC_POS
 from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.enums import AccountType
 from nautilus_trader.model.enums import OmsType
 from nautilus_trader.model.identifiers import TraderId
 from nautilus_trader.model.objects import Money
-from nautilus_trader.examples.strategies.prediction_market import (
-    TradeTickDeepValueHoldConfig,
-)
-from nautilus_trader.examples.strategies.prediction_market import (
-    TradeTickDeepValueHoldStrategy,
-)
 from nautilus_trader.risk.config import RiskEngineConfig
 
 
@@ -229,8 +225,7 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
     total_fills = sum(int(r["fills"]) for r in results)
     print(sep)
     print(
-        f"{'TOTAL':<{col_w}} {'':>7} {total_fills:>6} {'':>8} {'':>8} {'':>8} "
-        f"{total_pnl:>+12.4f}"
+        f"{'TOTAL':<{col_w}} {'':>7} {total_fills:>6} {'':>8} {'':>8} {'':>8} {total_pnl:>+12.4f}"
     )
     print(sep)
 
@@ -240,10 +235,7 @@ async def run() -> None:
     start = pd.Timestamp(now - timedelta(days=LOOKBACK_DAYS))
     end = pd.Timestamp(now)
 
-    print(
-        f"Loading Polymarket market {MARKET_SLUG} "
-        f"(lookback={LOOKBACK_DAYS}d)..."
-    )
+    print(f"Loading Polymarket market {MARKET_SLUG} (lookback={LOOKBACK_DAYS}d)...")
     try:
         loader = await PolymarketDataLoader.from_market_slug(MARKET_SLUG)
         trades = await loader.load_trades(start, end)

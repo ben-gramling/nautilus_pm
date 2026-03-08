@@ -31,6 +31,7 @@ class StubInstrumentProvider(InstrumentProvider):
     def currencies(self):
         return {}
 
+
 @pytest.fixture
 def kalshi_data_client(event_loop) -> tuple[KalshiDataClient, StubInstrumentProvider]:
     clock = LiveClock()

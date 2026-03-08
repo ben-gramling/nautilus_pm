@@ -741,8 +741,7 @@ class PolymarketDataLoader:
                         f"API response: {body_text}",
                     )
                 raise RuntimeError(
-                    f"HTTP request failed with status {response.status}: "
-                    f"{body_text}",
+                    f"HTTP request failed with status {response.status}: {body_text}",
                 )
 
             data = msgspec.json.decode(response.body)
