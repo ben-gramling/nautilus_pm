@@ -249,6 +249,7 @@ def test_append_brier_panel_uses_left_axis_label_instead_of_top_title() -> None:
     assert figure.yaxis[0].axis_label == "Cumulative Brier Advantage"
     assert figure.legend[0].orientation == "horizontal"
     assert figure.legend[0].location == "top_center"
+    assert figure.legend[0].label_text_font_size == "8pt"
     assert figure.x_range.bounds is not None
 
 
@@ -304,6 +305,7 @@ def test_append_multi_market_brier_panel_builds_one_line_per_market() -> None:
     assert figure.yaxis[0].axis_label == "Cumulative Brier Advantage"
     assert figure.legend[0].orientation == "horizontal"
     assert figure.legend[0].location == "top_center"
+    assert figure.legend[0].label_text_font_size == "8pt"
     assert figure.x_range.bounds is not None
     line_renderers = [
         renderer

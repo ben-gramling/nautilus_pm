@@ -793,6 +793,17 @@ def _append_brier_placeholder_panel(layout: Any, message: str) -> Any:
     return _append_chart_panel(layout, fig)
 
 
+def _style_panel_legend(fig: Any) -> None:
+    for legend in getattr(fig, "legend", []):
+        legend.border_line_width = 1
+        legend.border_line_color = "#333333"
+        legend.padding = 5
+        legend.spacing = 0
+        legend.margin = 0
+        legend.label_text_font_size = "8pt"
+        legend.click_policy = "hide"
+
+
 def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
     if brier_frame.empty:
         return layout
@@ -881,7 +892,7 @@ def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
     fig.yaxis.formatter = NumeralTickFormatter(format="0.0000")
     fig.legend.location = "top_center"
     fig.legend.orientation = "horizontal"
-    fig.legend.click_policy = "hide"
+    _style_panel_legend(fig)
     wheel_zoom = next((tool for tool in fig.tools if isinstance(tool, WheelZoomTool)), None)
     if wheel_zoom is not None:
         wheel_zoom.maintain_focus = False  # type: ignore[attr-defined]
@@ -1475,7 +1486,7 @@ def _append_multi_market_brier_panel(
     fig.yaxis.formatter = NumeralTickFormatter(format="0.0000")
     fig.legend.location = "top_center"
     fig.legend.orientation = "horizontal"
-    fig.legend.click_policy = "hide"
+    _style_panel_legend(fig)
     wheel_zoom = next((tool for tool in fig.tools if isinstance(tool, WheelZoomTool)), None)
     if wheel_zoom is not None:
         wheel_zoom.maintain_focus = False  # type: ignore[attr-defined]
