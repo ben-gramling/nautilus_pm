@@ -68,6 +68,44 @@ Default chart readability settings for this comparison set:
 - Polymarket defaults use a lower-activity public market so the public trades API
   stays within its historical offset ceiling while still producing non-flat charts.
 
+## Execution Modeling
+
+Prediction-market backtests here replay venue data into Nautilus Trader and then
+apply execution assumptions inside the backtest engine. For the current shared
+Kalshi and Polymarket runners, the main performance impacts beyond the raw API
+data are:
+
+- venue fees
+- slippage for taker-style orders
+
+### Fees
+
+- Kalshi uses the nonlinear expected-earnings fee model in
+  `nautilus_trader.adapters.kalshi.fee_model.KalshiProportionalFeeModel`.
+- Polymarket uses `nautilus_trader.adapters.polymarket.fee_model.PolymarketFeeModel`.
+- Polymarket loader instruments are enriched from the CLOB `fee-rate` endpoint
+  when the market payload itself reports zero fees, so fee-enabled markets can
+  backtest with the live fee source used by order creation.
+- If the venue reports zero fees for a market, the backtest also applies zero fees.
+
+### Slippage
+
+- Shared prediction-market backtests now default to
+  `PredictionMarketTakerFillModel`.
+- This applies a deterministic one-tick adverse fill for non-limit orders.
+- Polymarket uses the instrument tick size from market metadata.
+- Kalshi uses one cent as the effective order tick for taker slippage.
+- Limit orders keep the default matching behavior and do not get the forced
+  one-tick adverse move.
+
+### Limits
+
+- This is a conservative taker-execution proxy, not full microstructure replay.
+- Historical prediction-market backtests here do not replay full order-book
+  depth, queue position, or partial sweep behavior.
+- If a strategy depends on harvesting very small price changes with IOC or
+  market-style orders, one-tick slippage can dominate performance.
+
 ## Conventions
 
 - Keep venue-specific data access in adapter research modules.
