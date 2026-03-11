@@ -28,6 +28,13 @@ Each script should only do orchestration:
 - `polymarket_deep_value_resolution_hold.py`
 - `polymarket_sports_final_period_momentum.py`
 
+## Multi-Market Example
+
+- `polymarket_sports_final_period_momentum.py` is the public reference example for
+  running one strategy across many markets.
+- It defaults to `TARGET_RESULTS=50`, emits the usual per-market legacy charts, and
+  also writes one legacy multi-market summary chart.
+
 ## Single-Market Comparison Set
 
 Use these scripts to compare strategies on shared markets:
