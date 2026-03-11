@@ -8,7 +8,7 @@ import asyncio
 from collections.abc import Callable
 from datetime import UTC
 from datetime import datetime
-from datetime import timedelta
+from typing import Any
 
 import pandas as pd
 
@@ -84,12 +84,20 @@ async def run_single_market_bar_backtest(
     retry_base_delay: float = 2.0,
     initial_cash: float = 100.0,
     chart_resample_rule: str | None = None,
-) -> None:
-    now = datetime.now(UTC)
-    start = pd.Timestamp(now - timedelta(days=lookback_days))
-    end = pd.Timestamp(now)
+    emit_summary: bool = True,
+    emit_html: bool = True,
+    return_chart_layout: bool = False,
+    end_time: pd.Timestamp | datetime | None = None,
+) -> dict[str, Any] | None:
+    end = pd.Timestamp(end_time if end_time is not None else datetime.now(UTC))
+    if end.tzinfo is None:
+        end = end.tz_localize(UTC)
+    start = end - pd.Timedelta(days=lookback_days)
 
-    print(f"Loading Kalshi market {market_ticker} ({interval}, lookback={lookback_days}d)...")
+    print(
+        f"Loading Kalshi market {market_ticker} "
+        f"({interval}, lookback={lookback_days}d, window_end={end.isoformat()})..."
+    )
 
     try:
         loader = await KalshiDataLoader.from_market_ticker(market_ticker)
@@ -145,13 +153,19 @@ async def run_single_market_bar_backtest(
         count_key="bars",
         chart_resample_rule=chart_resample_rule,
         market_key="ticker",
+        emit_html=emit_html,
+        return_chart_layout=return_chart_layout,
     )
 
-    print_backtest_summary(
-        results=[result],
-        market_key="ticker",
-        count_key="bars",
-        count_label="Bars",
-        pnl_label="PnL (USD)",
-    )
-    print(f"\nLegacy chart saved to output/{name}_{market_ticker}_legacy.html")
+    if emit_summary:
+        print_backtest_summary(
+            results=[result],
+            market_key="ticker",
+            count_key="bars",
+            count_label="Bars",
+            pnl_label="PnL (USD)",
+        )
+        if emit_html and result.get("chart_path"):
+            print(f"\nLegacy chart saved to {result['chart_path']}")
+
+    return result

@@ -17,6 +17,7 @@ This package contains reusable, venue-agnostic strategy classes for prediction m
 - `mean_reversion.py`: rolling-average spread capture.
 - `ema_crossover.py`: trend-following crossover.
 - `breakout.py`: volatility breakout with bounded entry near resolution.
+- `final_period_momentum.py`: late-game threshold breakout in the final minutes.
 - `rsi_reversion.py`: oscillator pullback entries.
 - `vwap_reversion.py`: trade-tick VWAP dislocation fade.
 - `panic_fade.py`: capitulation/rebound logic with time-based exits.

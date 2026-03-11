@@ -2,7 +2,7 @@
 """
 Backtest runner - interactive strategy menu.
 
-Discovers strategies in examples/backtest/ and
+Discovers strategies recursively in examples/backtest/ and
 examples/backtest/prediction_markets/ (and any directories listed in
 the EXTRA_STRATEGIES_DIRS environment variable) that expose:
 
@@ -75,15 +75,41 @@ CYAN = "\033[36m"
 RESET = "\033[0m"
 
 
+def _strategy_import_parents(path: Path) -> list[str]:
+    parents: list[str] = []
+    for strategy_root in STRATEGIES_DIRS:
+        try:
+            path.relative_to(strategy_root)
+        except ValueError:
+            continue
+
+        current = path.parent
+        while True:
+            current_str = str(current)
+            if current_str not in parents:
+                parents.append(current_str)
+            if current == strategy_root:
+                break
+            current = current.parent
+        break
+
+    if not parents:
+        parents.append(str(path.parent))
+    return parents
+
+
+def _module_name_for_path(path: Path) -> str:
+    rel = path.resolve().relative_to(_REPO_ROOT.resolve())
+    return "strategy_" + "_".join(rel.with_suffix("").parts)
+
+
 def _load_strategy(path: Path) -> dict | None:
     """Load a strategy module by file path and return its menu entry, or None."""
-    # Ensure the file's directory is importable (for sibling imports like
-    # `from kalshi_spread_strategy import ...`).
-    parent = str(path.parent)
-    if parent not in sys.path:
-        sys.path.insert(0, parent)
+    for parent in reversed(_strategy_import_parents(path)):
+        if parent not in sys.path:
+            sys.path.insert(0, parent)
     try:
-        spec = importlib.util.spec_from_file_location(path.stem, path)
+        spec = importlib.util.spec_from_file_location(_module_name_for_path(path), path)
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
     except Exception as exc:
@@ -101,12 +127,17 @@ def _load_strategy(path: Path) -> dict | None:
 def discover() -> list[dict]:
     """Scan strategy directories for modules that expose NAME, DESCRIPTION, and run()."""
     found = []
+    seen_paths: set[Path] = set()
     for strats_dir in STRATEGIES_DIRS:
         if not strats_dir.exists():
             continue
-        for path in sorted(strats_dir.glob("*.py")):
-            if path.name.startswith("_"):
+        for path in sorted(strats_dir.rglob("*.py")):
+            if path.name.startswith("_") or "__pycache__" in path.parts:
                 continue
+            resolved = path.resolve()
+            if resolved in seen_paths:
+                continue
+            seen_paths.add(resolved)
             strategy = _load_strategy(path)
             if strategy:
                 found.append(strategy)

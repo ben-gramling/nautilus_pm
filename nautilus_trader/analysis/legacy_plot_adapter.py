@@ -13,21 +13,16 @@
 #  limitations under the License.
 # -------------------------------------------------------------------------------------------------
 """
-Bridge Nautilus backtest results into the legacy prediction-market plotting framework.
+Bridge Nautilus backtest results into the vendored legacy prediction-market plotting framework.
 
-This adapter maps Nautilus reports into the `BacktestResult` expected by
-`prediction-market-backtesting` legacy charts and appends a cumulative Brier
-advantage panel.
+This adapter maps Nautilus reports into the `BacktestResult` expected by the
+vendored legacy Bokeh charts and appends a cumulative Brier advantage panel.
 """
 
 from __future__ import annotations
 
 import importlib
-import os
 import re
-import shutil
-import subprocess
-import sys
 from collections.abc import Mapping
 from collections.abc import Sequence
 from datetime import datetime
@@ -40,9 +35,7 @@ import pandas as pd
 from nautilus_trader.analysis.reporter import ReportProvider
 
 
-DEFAULT_LEGACY_CLONE = "https://github.com/evan-kolberg/prediction-market-backtesting.git"
-DEFAULT_LEGACY_WORKTREE = Path("/tmp/prediction-market-backtesting-legacy")  # noqa: S108
-GIT_BIN = shutil.which("git") or "git"
+LEGACY_BACKTESTING_ROOT = Path(__file__).resolve().parent / "legacy_backtesting"
 
 
 def _parse_float(value: Any, default: float = 0.0) -> float:
@@ -151,199 +144,94 @@ def prepare_cumulative_brier_advantage(
     return frame
 
 
-def _candidate_legacy_paths(explicit_path: str | Path | None) -> list[Path]:
-    repo_root = Path(__file__).resolve().parents[2]
-
-    candidates: list[Path] = []
-    if explicit_path is not None:
-        candidates.append(Path(explicit_path).expanduser())
-
-    env_repo = os.environ.get("NAUTILUS_PM_LEGACY_PLOT_REPO")
-    if env_repo:
-        candidates.append(Path(env_repo).expanduser())
-
-    candidates.extend(
-        [
-            repo_root.parent / "prediction-market-backtesting",
-            Path("/Users/evankolberg/prediction-market-backtesting"),
-            Path("/tmp/pmb_legacy_22772"),  # noqa: S108
-            DEFAULT_LEGACY_WORKTREE,
-        ],
-    )
-
-    # Deduplicate while preserving order.
-    deduped: list[Path] = []
-    seen: set[Path] = set()
-    for candidate in candidates:
-        try:
-            resolved = candidate.expanduser().resolve()
-        except FileNotFoundError:
-            resolved = candidate.expanduser()
-        if resolved not in seen:
-            seen.add(resolved)
-            deduped.append(resolved)
-
-    return deduped
-
-
-def _path_has_legacy_plotting(repo_path: Path) -> bool:
-    return (repo_path / "src" / "backtesting" / "plotting.py").exists()
-
-
-def _git_has_legacy_branch(repo_path: Path) -> bool:
-    if not (repo_path / ".git").exists():
-        return False
-
-    try:
-        proc = subprocess.run(  # noqa: S603
-            [GIT_BIN, "-C", str(repo_path), "rev-parse", "--verify", "legacy"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        return proc.returncode == 0
-    except OSError:
-        return False
-
-
-def _prepare_legacy_worktree(repo_path: Path) -> Path | None:
-    if not _git_has_legacy_branch(repo_path):
-        return None
-
-    if _path_has_legacy_plotting(DEFAULT_LEGACY_WORKTREE):
-        return DEFAULT_LEGACY_WORKTREE
-
-    if DEFAULT_LEGACY_WORKTREE.exists() and not (DEFAULT_LEGACY_WORKTREE / ".git").exists():
-        shutil.rmtree(DEFAULT_LEGACY_WORKTREE, ignore_errors=True)
-
-    try:
-        subprocess.run(  # noqa: S603
-            [
-                GIT_BIN,
-                "-C",
-                str(repo_path),
-                "worktree",
-                "add",
-                "--force",
-                "--detach",
-                str(DEFAULT_LEGACY_WORKTREE),
-                "legacy",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError:
-        # Worktree might already exist but in a stale state.
-        try:
-            subprocess.run(  # noqa: S603
-                [
-                    GIT_BIN,
-                    "-C",
-                    str(repo_path),
-                    "worktree",
-                    "remove",
-                    "--force",
-                    str(DEFAULT_LEGACY_WORKTREE),
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            shutil.rmtree(DEFAULT_LEGACY_WORKTREE, ignore_errors=True)
-            subprocess.run(  # noqa: S603
-                [
-                    GIT_BIN,
-                    "-C",
-                    str(repo_path),
-                    "worktree",
-                    "add",
-                    "--force",
-                    "--detach",
-                    str(DEFAULT_LEGACY_WORKTREE),
-                    "legacy",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError:
-            return None
-
-    return DEFAULT_LEGACY_WORKTREE if _path_has_legacy_plotting(DEFAULT_LEGACY_WORKTREE) else None
-
-
-def _clone_legacy_repo(target_path: Path) -> Path | None:
-    if _path_has_legacy_plotting(target_path):
-        return target_path
-
-    if target_path.exists():
-        shutil.rmtree(target_path, ignore_errors=True)
-
-    try:
-        subprocess.run(  # noqa: S603
-            [
-                GIT_BIN,
-                "clone",
-                "--depth",
-                "1",
-                "--branch",
-                "legacy",
-                DEFAULT_LEGACY_CLONE,
-                str(target_path),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError:
-        return None
-
-    return target_path if _path_has_legacy_plotting(target_path) else None
-
-
 def resolve_legacy_plot_repo(explicit_path: str | Path | None = None) -> Path:
     """
-    Resolve a local checkout containing `src/backtesting/plotting.py`.
+    Return the vendored legacy plotting package root inside this repository.
     """
-    for candidate in _candidate_legacy_paths(explicit_path):
-        if _path_has_legacy_plotting(candidate):
-            return candidate
-
-        worktree = _prepare_legacy_worktree(candidate)
-        if worktree is not None and _path_has_legacy_plotting(worktree):
-            return worktree
-
-    cloned = _clone_legacy_repo(DEFAULT_LEGACY_WORKTREE)
-    if cloned is not None:
-        return cloned
-
-    raise FileNotFoundError(
-        "Could not locate legacy prediction-market plotting repo. "
-        "Set NAUTILUS_PM_LEGACY_PLOT_REPO to a checkout containing "
-        "src/backtesting/plotting.py (legacy branch).",
-    )
+    _ = explicit_path
+    plotting_path = LEGACY_BACKTESTING_ROOT / "plotting.py"
+    if not plotting_path.exists():
+        raise FileNotFoundError(f"Vendored legacy plotting module is missing: {plotting_path}")
+    return LEGACY_BACKTESTING_ROOT
 
 
-def _load_legacy_modules(repo_path: Path) -> tuple[Any, Any]:
-    if str(repo_path) not in sys.path:
-        sys.path.insert(0, str(repo_path))
-
+def _load_legacy_modules(repo_path: Path | None = None) -> tuple[Any, Any]:
+    _ = repo_path
     importlib.invalidate_caches()
-    models = importlib.import_module("src.backtesting.models")
-    plotting = importlib.import_module("src.backtesting.plotting")
+    models = importlib.import_module("nautilus_trader.analysis.legacy_backtesting.models")
+    plotting = importlib.import_module("nautilus_trader.analysis.legacy_backtesting.plotting")
     return models, plotting
 
 
-def _disable_legacy_downsampling(plotting_module: Any) -> None:
+def _configure_legacy_downsampling(
+    plotting_module: Any,
+    *,
+    adaptive: bool = True,
+    max_points: int = 5000,
+) -> None:
     """
-    Force dense chart rendering by disabling legacy dataframe downsampling.
+    Configure legacy dataframe downsampling.
     """
     downsample_fn = getattr(plotting_module, "_downsample", None)
     if downsample_fn is None:
         return
 
-    def _identity_downsample(eq, fills_df, market_df, max_points=5000, alloc_df=None):
+    if not adaptive:
+        def _identity_downsample(
+            eq,
+            fills_df,
+            market_df,
+            max_points=5000,
+            alloc_df=None,
+            keep_indices=None,
+        ):
+            return eq, fills_df, market_df, alloc_df
+
+        plotting_module._downsample = _identity_downsample
+        return
+
+    requested_max_points = max(2, int(max_points))
+
+    def _adaptive_downsample(
+        eq,
+        fills_df,
+        market_df,
+        max_points=5000,
+        alloc_df=None,
+        keep_indices=None,
+    ):
+        total_points = sum(
+            len(frame)
+            for frame in (eq, fills_df, market_df, alloc_df)
+            if frame is not None and hasattr(frame, "__len__")
+        )
+        if total_points <= requested_max_points:
+            return eq, fills_df, market_df, alloc_df
+
+        return downsample_fn(
+            eq,
+            fills_df,
+            market_df,
+            max_points=requested_max_points,
+            alloc_df=alloc_df,
+            keep_indices=keep_indices,
+        )
+
+    plotting_module._downsample = _adaptive_downsample
+
+
+def _disable_legacy_downsampling(plotting_module: Any) -> None:
+    """
+    Backward-compatible helper for callers that explicitly want dense rendering.
+    """
+    def _identity_downsample(
+        eq,
+        fills_df,
+        market_df,
+        max_points=5000,
+        alloc_df=None,
+        keep_indices=None,
+    ):
         return eq, fills_df, market_df, alloc_df
 
     plotting_module._downsample = _identity_downsample
@@ -913,7 +801,9 @@ def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
         from bokeh.models import ColumnDataSource
         from bokeh.models import HoverTool
         from bokeh.models import NumeralTickFormatter
+        from bokeh.models import Range1d
         from bokeh.models import Span
+        from bokeh.models import WheelZoomTool
         from bokeh.plotting import figure
     except ImportError as exc:  # pragma: no cover - runtime dependency
         raise ImportError("Bokeh is required for legacy chart rendering.") from exc
@@ -926,6 +816,15 @@ def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
 
     frame.index = frame.index.tz_convert("UTC").tz_localize(None)
     frame = frame.drop_duplicates(keep="last")
+    if len(frame.index) > 1:
+        pad = (frame.index[-1] - frame.index[0]) / 20
+        x_range: Any = Range1d(
+            frame.index[0],
+            frame.index[-1],
+            bounds=(frame.index[0] - pad, frame.index[-1] + pad),
+        )
+    else:
+        x_range = None
 
     source = ColumnDataSource(
         {
@@ -944,6 +843,7 @@ def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
         active_scroll="xwheel_zoom",
         sizing_mode="stretch_width",
         toolbar_location="right",
+        x_range=x_range,
     )
 
     fig.line(
@@ -979,8 +879,12 @@ def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
     fig.xaxis.axis_label = "Date"
     fig.yaxis.axis_label = "Cumulative Brier Advantage"
     fig.yaxis.formatter = NumeralTickFormatter(format="0.0000")
-    fig.legend.location = "top_left"
+    fig.legend.location = "top_center"
+    fig.legend.orientation = "horizontal"
     fig.legend.click_policy = "hide"
+    wheel_zoom = next((tool for tool in fig.tools if isinstance(tool, WheelZoomTool)), None)
+    if wheel_zoom is not None:
+        wheel_zoom.maintain_focus = False  # type: ignore[attr-defined]
 
     return _append_chart_panel(layout, fig)
 
@@ -1227,7 +1131,53 @@ def _remove_yes_price_profitability_connectors(layout: Any) -> None:
         yes_fig.renderers = [r for r in yes_fig.renderers if r not in renderers_to_drop]
 
 
-def _standardize_periodic_pnl_panel(layout: Any) -> None:
+def _remove_yes_price_fill_markers(layout: Any) -> None:
+    """
+    Remove synthetic fill marker overlays from the YES price panel.
+    """
+    yes_fig = None
+    for fig in _iter_figures(layout):
+        labels = [str(axis.axis_label or "") for axis in getattr(fig, "yaxis", [])]
+        if any(label == "YES Price" for label in labels):
+            yes_fig = fig
+            break
+
+    if yes_fig is None:
+        return
+
+    renderers_to_drop: set[Any] = set()
+
+    for renderer in getattr(yes_fig, "renderers", []):
+        glyph = getattr(renderer, "glyph", None)
+        source = getattr(renderer, "data_source", None)
+        data = getattr(source, "data", None)
+        if glyph is None or not isinstance(data, dict):
+            continue
+        if glyph.__class__.__name__ not in {"Scatter", "Circle"}:
+            continue
+        keys = set(data.keys())
+        if {"action", "side", "quantity", "price", "market_id"}.issubset(keys):
+            renderers_to_drop.add(renderer)
+
+    if renderers_to_drop:
+        yes_fig.renderers = [r for r in yes_fig.renderers if r not in renderers_to_drop]
+        for legend in getattr(yes_fig, "legend", []):
+            kept_items = []
+            for item in list(getattr(legend, "items", [])):
+                lower = _legend_item_label_text(item).lower()
+                item_renderers = [r for r in getattr(item, "renderers", []) if r not in renderers_to_drop]
+                if "fills" in lower or not item_renderers:
+                    continue
+                item.renderers = item_renderers
+                kept_items.append(item)
+            legend.items = kept_items
+        for tool in getattr(yes_fig, "tools", []):
+            renderers = getattr(tool, "renderers", None)
+            if isinstance(renderers, list | tuple):
+                tool.renderers = [r for r in renderers if r not in renderers_to_drop]
+
+
+def _standardize_periodic_pnl_panel(layout: Any) -> None:  # noqa: C901
     try:
         from bokeh.models import ColumnDataSource
         from bokeh.models import HoverTool
@@ -1282,7 +1232,258 @@ def _standardize_periodic_pnl_panel(layout: Any) -> None:
     target.yaxis.formatter = NumeralTickFormatter(format="$ 0,0")
 
 
-def _standardize_yes_price_hover(layout: Any) -> None:
+def _relabel_market_pnl_panel(layout: Any, axis_label: str = "Market P&L") -> None:
+    try:
+        from bokeh.models import HoverTool
+    except ImportError:
+        return
+
+    target = _find_figure_with_yaxis_label(layout, lambda label: label == "Profit / Loss")
+    if target is None:
+        return
+
+    if getattr(target, "yaxis", None):
+        target.yaxis[0].axis_label = axis_label
+
+    for tool in getattr(target, "tools", []):
+        if not isinstance(tool, HoverTool):
+            continue
+        if not tool.tooltips:
+            continue
+        updated = []
+        for label, value in tool.tooltips:
+            if label == "P/L":
+                updated.append(("Final Market P&L", value))
+            else:
+                updated.append((label, value))
+        tool.tooltips = updated
+
+
+def _relabel_periodic_pnl_panel(layout: Any, axis_label: str) -> None:
+    target = _find_figure_with_yaxis_label(layout, lambda label: "periodic" in label.lower())
+    if target is None:
+        return
+
+    if getattr(target, "yaxis", None):
+        target.yaxis[0].axis_label = axis_label
+
+
+def _remove_panels_by_yaxis_labels(layout: Any, labels: set[str]) -> None:
+    if not labels:
+        return
+
+    def _should_keep(obj: Any) -> bool:
+        axes = getattr(obj, "yaxis", None)
+        if not axes:
+            return True
+        axis_labels = {str(axis.axis_label or "") for axis in axes}
+        return axis_labels.isdisjoint(labels)
+
+    def _prune(node: Any) -> None:
+        children = getattr(node, "children", None)
+        if not children:
+            return
+
+        filtered_children: list[Any] = []
+        for child in children:
+            obj = child[0] if isinstance(child, tuple) else child
+            if obj is not None and not _should_keep(obj):
+                continue
+            if obj is not None:
+                _prune(obj)
+            filtered_children.append(child)
+        node.children = filtered_children
+
+    _prune(layout)
+
+
+def _extract_yes_price_colors(layout: Any) -> dict[str, Any]:
+    target = _find_figure_with_yaxis_label(layout, lambda label: label == "YES Price")
+    if target is None:
+        return {}
+
+    color_by_market: dict[str, Any] = {}
+    for renderer in _yes_price_line_renderers(target):
+        glyph = getattr(renderer, "glyph", None)
+        if glyph is None:
+            continue
+        y_field = _field_name(getattr(glyph, "y", None))
+        if not y_field or not y_field.startswith("price_"):
+            continue
+        color = getattr(glyph, "line_color", None)
+        if color is None:
+            continue
+        color_by_market[y_field.removeprefix("price_")] = color
+
+    return color_by_market
+
+
+def _downsample_frame_rows(
+    frame: pd.DataFrame,
+    *,
+    max_points: int,
+    extrema_columns: Sequence[str] = (),
+) -> pd.DataFrame:
+    if frame.empty or len(frame) <= max_points:
+        return frame
+
+    keep: set[int] = {0, len(frame) - 1}
+    for column in extrema_columns:
+        if column not in frame:
+            continue
+        values = pd.to_numeric(frame[column], errors="coerce").to_numpy(dtype=float)
+        if len(values) == 0 or np.isnan(values).all():
+            continue
+        keep.add(int(np.nanargmax(values)))
+        keep.add(int(np.nanargmin(values)))
+
+    budget = max(0, int(max_points) - len(keep))
+    if budget > 0:
+        keep.update(np.linspace(0, len(frame) - 1, num=budget, dtype=int).tolist())
+
+    return frame.iloc[sorted(keep)].copy()
+
+
+def _append_multi_market_brier_panel(
+    layout: Any,
+    brier_frames: Mapping[str, pd.DataFrame],
+    *,
+    axis_label: str = "Cumulative Brier Advantage",
+    color_by_market: Mapping[str, Any] | None = None,
+    max_points_per_market: int = 400,
+) -> Any:
+    valid_frames = {
+        market_id: frame.copy()
+        for market_id, frame in brier_frames.items()
+        if frame is not None and not frame.empty
+    }
+    if not valid_frames:
+        return layout
+
+    try:
+        from bokeh.models import ColumnDataSource
+        from bokeh.models import HoverTool
+        from bokeh.models import NumeralTickFormatter
+        from bokeh.models import Range1d
+        from bokeh.models import Span
+        from bokeh.models import WheelZoomTool
+        from bokeh.palettes import Category10
+        from bokeh.plotting import figure
+    except ImportError as exc:  # pragma: no cover - runtime dependency
+        raise ImportError("Bokeh is required for legacy chart rendering.") from exc
+
+    datetime_bounds: list[pd.Timestamp] = []
+    for frame in valid_frames.values():
+        index = pd.to_datetime(frame.index, utc=True, errors="coerce")
+        index = index[~index.isna()]
+        if len(index) == 0:
+            continue
+        datetime_bounds.extend([index.min(), index.max()])
+
+    if len(datetime_bounds) >= 2:
+        start = min(datetime_bounds).tz_convert("UTC").tz_localize(None)
+        end = max(datetime_bounds).tz_convert("UTC").tz_localize(None)
+        pad = (end - start) / 20 if end > start else pd.Timedelta(hours=1)
+        x_range: Any = Range1d(start, end, bounds=(start - pad, end + pad))
+    else:
+        x_range = None
+
+    color_cycle = iter(Category10[10])
+    fig = figure(
+        title=None,
+        x_axis_type="datetime",
+        height=260,
+        tools="xpan,xwheel_zoom,box_zoom,undo,redo,reset,save",
+        active_drag="xpan",
+        active_scroll="xwheel_zoom",
+        sizing_mode="stretch_width",
+        toolbar_location="right",
+        x_range=x_range,
+    )
+
+    renderers: list[Any] = []
+    for market_id, frame in valid_frames.items():
+        frame.index = pd.to_datetime(frame.index, utc=True, errors="coerce")
+        frame = frame[~frame.index.isna()].sort_index()
+        if frame.empty:
+            continue
+
+        frame.index = frame.index.tz_convert("UTC").tz_localize(None)
+        frame = frame[~frame.index.duplicated(keep="last")]
+        frame = _downsample_frame_rows(
+            frame,
+            max_points=max_points_per_market,
+            extrema_columns=("cumulative_brier_advantage", "brier_advantage"),
+        )
+
+        source = ColumnDataSource(
+            {
+                "datetime": frame.index,
+                "cumulative_brier_advantage": frame["cumulative_brier_advantage"].to_numpy(dtype=float),
+                "brier_advantage": frame["brier_advantage"].to_numpy(dtype=float),
+            },
+        )
+        line_color = None
+        if color_by_market is not None:
+            line_color = color_by_market.get(market_id)
+        if line_color is None:
+            try:
+                line_color = next(color_cycle)
+            except StopIteration:
+                color_cycle = iter(Category10[10])
+                line_color = next(color_cycle)
+
+        renderer = fig.line(
+            x="datetime",
+            y="cumulative_brier_advantage",
+            source=source,
+            line_width=2.0,
+            line_color=line_color,
+            legend_label=market_id,
+            muted_alpha=0.15,
+        )
+        renderer.name = market_id
+        renderers.append(renderer)
+
+    if not renderers:
+        return layout
+
+    fig.add_layout(
+        Span(
+            location=0,
+            dimension="width",
+            line_color="#666666",
+            line_dash="dashed",
+            line_width=1,
+        ),
+    )
+    fig.add_tools(
+        HoverTool(
+            renderers=renderers,
+            mode="vline",
+            formatters={"@datetime": "datetime"},
+            tooltips=[
+                ("Market", "$name"),
+                ("Date", "@datetime{%F %T}"),
+                ("Cum Advantage", "@cumulative_brier_advantage{0.0000}"),
+                ("Point Advantage", "@brier_advantage{0.0000}"),
+            ],
+        ),
+    )
+    fig.xaxis.axis_label = "Date"
+    fig.yaxis.axis_label = axis_label
+    fig.yaxis.formatter = NumeralTickFormatter(format="0.0000")
+    fig.legend.location = "top_center"
+    fig.legend.orientation = "horizontal"
+    fig.legend.click_policy = "hide"
+    wheel_zoom = next((tool for tool in fig.tools if isinstance(tool, WheelZoomTool)), None)
+    if wheel_zoom is not None:
+        wheel_zoom.maintain_focus = False  # type: ignore[attr-defined]
+
+    return _append_chart_panel(layout, fig)
+
+
+def _standardize_yes_price_hover(layout: Any) -> None:  # noqa: C901
     try:
         from bokeh.models import HoverTool
     except ImportError:
@@ -1353,12 +1554,22 @@ def _focus_allocation_panel(layout: Any) -> None:
         break
 
 
-def _apply_layout_overrides(layout: Any, initial_cash: float) -> Any:
+def _apply_layout_overrides(
+    layout: Any,
+    initial_cash: float,
+    *,
+    hide_yes_price_fill_markers: bool = False,
+    relabel_market_pnl: bool = False,
+) -> Any:
     _ = initial_cash  # Keep signature stable for callers and future layout transforms.
     layout = _remove_data_banner(layout)
     _focus_allocation_panel(layout)
     _remove_yes_price_profitability_connectors(layout)
+    if hide_yes_price_fill_markers:
+        _remove_yes_price_fill_markers(layout)
     _standardize_periodic_pnl_panel(layout)
+    if relabel_market_pnl:
+        _relabel_market_pnl_panel(layout)
     _standardize_yes_price_hover(layout)
     return layout
 
@@ -1377,7 +1588,21 @@ def _save_layout(layout: Any, output_path: Path, title: str) -> None:
     save(layout, filename=str(output_path), title=title)
 
 
-def create_legacy_backtest_chart(
+def save_legacy_backtest_layout(
+    layout: Any,
+    output_path: str | Path,
+    title: str,
+) -> str:
+    """
+    Save a pre-built legacy chart layout and return the absolute output path.
+    """
+    output_abs = Path(output_path).expanduser().resolve()
+    output_abs.parent.mkdir(parents=True, exist_ok=True)
+    _save_layout(layout, output_abs, title)
+    return str(output_abs)
+
+
+def build_legacy_backtest_layout(
     engine: Any,
     output_path: str | Path,
     strategy_name: str,
@@ -1391,18 +1616,19 @@ def create_legacy_backtest_chart(
     open_browser: bool = False,
     max_markets: int = 30,
     progress: bool = False,
-) -> str:
+    adaptive_downsampling: bool = True,
+    max_downsample_points: int = 5000,
+) -> tuple[Any, str]:
     """
-    Render a legacy-style interactive chart from a Nautilus backtest engine.
-
-    Returns
-    -------
-    str
-        Absolute output HTML path.
+    Build the final legacy-style Bokeh layout for a Nautilus backtest engine.
     """
-    repo_path = resolve_legacy_plot_repo(legacy_repo_path)
-    models_module, plotting_module = _load_legacy_modules(repo_path)
-    _disable_legacy_downsampling(plotting_module)
+    _ = legacy_repo_path  # Legacy code is vendored in-repo.
+    models_module, plotting_module = _load_legacy_modules()
+    _configure_legacy_downsampling(
+        plotting_module,
+        adaptive=adaptive_downsampling,
+        max_points=max_downsample_points,
+    )
 
     account_report = _extract_account_report(engine)
     fills_report = engine.trader.generate_order_fills_report()
@@ -1442,7 +1668,6 @@ def create_legacy_backtest_chart(
     )
 
     output_abs = Path(output_path).expanduser().resolve()
-    output_abs.parent.mkdir(parents=True, exist_ok=True)
     chart_title = f"{strategy_name} legacy chart"
 
     layout = plotting_module.plot(
@@ -1471,6 +1696,45 @@ def create_legacy_backtest_chart(
         if unavailable_reason is not None:
             layout = _append_brier_placeholder_panel(layout, unavailable_reason)
 
-    _save_layout(layout, output_abs, chart_title)
+    return layout, chart_title
 
-    return str(output_abs)
+
+def create_legacy_backtest_chart(
+    engine: Any,
+    output_path: str | Path,
+    strategy_name: str,
+    platform: str,
+    initial_cash: float,
+    market_prices: Mapping[str, Sequence[tuple[Any, float]]] | None = None,
+    user_probabilities: pd.Series | None = None,
+    market_probabilities: pd.Series | None = None,
+    outcomes: pd.Series | None = None,
+    legacy_repo_path: str | Path | None = None,
+    open_browser: bool = False,
+    max_markets: int = 30,
+    progress: bool = False,
+    adaptive_downsampling: bool = True,
+    max_downsample_points: int = 5000,
+) -> str:
+    """
+    Render a legacy-style interactive chart from a Nautilus backtest engine.
+    """
+    layout, chart_title = build_legacy_backtest_layout(
+        engine=engine,
+        output_path=output_path,
+        strategy_name=strategy_name,
+        platform=platform,
+        initial_cash=initial_cash,
+        market_prices=market_prices,
+        user_probabilities=user_probabilities,
+        market_probabilities=market_probabilities,
+        outcomes=outcomes,
+        legacy_repo_path=legacy_repo_path,
+        open_browser=open_browser,
+        max_markets=max_markets,
+        progress=progress,
+        adaptive_downsampling=adaptive_downsampling,
+        max_downsample_points=max_downsample_points,
+    )
+
+    return save_legacy_backtest_layout(layout, output_path, chart_title)

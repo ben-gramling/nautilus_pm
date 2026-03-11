@@ -247,6 +247,9 @@ def test_append_brier_panel_uses_left_axis_label_instead_of_top_title() -> None:
     figure = layout.children[0]
     assert figure.title is None
     assert figure.yaxis[0].axis_label == "Cumulative Brier Advantage"
+    assert figure.legend[0].orientation == "horizontal"
+    assert figure.legend[0].location == "top_center"
+    assert figure.x_range.bounds is not None
 
 
 def test_append_brier_placeholder_panel_uses_left_axis_label_instead_of_top_title() -> None:
@@ -263,6 +266,53 @@ def test_append_brier_placeholder_panel_uses_left_axis_label_instead_of_top_titl
     assert figure.yaxis[0].axis_label == "Cumulative Brier Advantage"
 
 
+def test_remove_panels_by_yaxis_labels_prunes_matching_figures() -> None:
+    keep = _DummyFigure(axis_label="YES Price", title="YES Price")
+    drop = _DummyFigure(axis_label="Cash / Equity", title="Cash / Equity")
+    nested = _DummyLayout(children=[keep, drop])
+    layout = _DummyLayout(children=[nested])
+
+    adapter._remove_panels_by_yaxis_labels(layout, {"Cash / Equity"})
+
+    assert nested.children == [keep]
+
+
+def test_append_multi_market_brier_panel_builds_one_line_per_market() -> None:
+    layout = _DummyLayout()
+    brier_frames = {
+        "market-a": pd.DataFrame(
+            {
+                "brier_advantage": [0.1, -0.05],
+                "cumulative_brier_advantage": [0.1, 0.05],
+            },
+            index=pd.to_datetime(["2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"], utc=True),
+        ),
+        "market-b": pd.DataFrame(
+            {
+                "brier_advantage": [0.2, 0.1],
+                "cumulative_brier_advantage": [0.2, 0.3],
+            },
+            index=pd.to_datetime(["2026-03-01T12:00:00Z", "2026-03-02T12:00:00Z"], utc=True),
+        ),
+    }
+
+    result = adapter._append_multi_market_brier_panel(layout, brier_frames)
+
+    assert result is layout
+    assert len(layout.children) == 1
+    figure = layout.children[0]
+    assert figure.yaxis[0].axis_label == "Cumulative Brier Advantage"
+    assert figure.legend[0].orientation == "horizontal"
+    assert figure.legend[0].location == "top_center"
+    assert figure.x_range.bounds is not None
+    line_renderers = [
+        renderer
+        for renderer in figure.renderers
+        if getattr(getattr(renderer, "glyph", None), "__class__", None).__name__ == "Line"
+    ]
+    assert len(line_renderers) == 2
+
+
 @pytest.mark.parametrize("with_brier_panel", [False, True])
 def test_create_legacy_backtest_chart_saves_final_layout_without_requiring_brier_panel(
     monkeypatch: pytest.MonkeyPatch,
@@ -272,7 +322,7 @@ def test_create_legacy_backtest_chart_saves_final_layout_without_requiring_brier
     base_layout = _DummyLayout()
     brier_layout = _DummyLayout()
     plotting_module = SimpleNamespace(plot=lambda *args, **kwargs: base_layout)
-    downsampling_calls: list[object] = []
+    downsampling_calls: list[tuple[object, bool, int]] = []
     save_calls: list[tuple[object, Path, str]] = []
 
     class _BacktestResult:
@@ -292,8 +342,10 @@ def test_create_legacy_backtest_chart_saves_final_layout_without_requiring_brier
     )
     monkeypatch.setattr(
         adapter,
-        "_disable_legacy_downsampling",
-        lambda module: downsampling_calls.append(module),
+        "_configure_legacy_downsampling",
+        lambda module, adaptive, max_points: downsampling_calls.append(
+            (module, adaptive, max_points),
+        ),
     )
     monkeypatch.setattr(adapter, "_extract_account_report", lambda *_: object())
     monkeypatch.setattr(adapter, "_convert_fills", lambda *_: [])
@@ -340,7 +392,7 @@ def test_create_legacy_backtest_chart_saves_final_layout_without_requiring_brier
     )
 
     assert result == str(output_path.resolve())
-    assert downsampling_calls == [plotting_module]
+    assert downsampling_calls == [(plotting_module, True, 5000)]
     assert save_calls == [
         (
             brier_layout if with_brier_panel else base_layout,
@@ -374,7 +426,7 @@ def test_create_legacy_backtest_chart_saves_placeholder_brier_panel_when_outcome
         "_load_legacy_modules",
         lambda *_: (SimpleNamespace(BacktestResult=_BacktestResult), plotting_module),
     )
-    monkeypatch.setattr(adapter, "_disable_legacy_downsampling", lambda *_: None)
+    monkeypatch.setattr(adapter, "_configure_legacy_downsampling", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(adapter, "_extract_account_report", lambda *_: object())
     monkeypatch.setattr(adapter, "_convert_fills", lambda *_: [])
     monkeypatch.setattr(adapter, "_build_portfolio_snapshots", lambda *args, **kwargs: [])

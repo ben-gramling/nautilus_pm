@@ -16,6 +16,7 @@ Each script should only do orchestration:
 - `kalshi_breakout.py`
 - `kalshi_rsi_reversion.py`
 - `kalshi_panic_fade.py`
+- `kalshi_sports_final_period_momentum.py`
 - `kalshi_ema_bars.py`
 - `kalshi_spread_capture.py`
 - `polymarket_ema_crossover.py`
@@ -25,6 +26,7 @@ Each script should only do orchestration:
 - `polymarket_simple_quoter.py`
 - `polymarket_spread_capture.py`
 - `polymarket_deep_value_resolution_hold.py`
+- `polymarket_sports_final_period_momentum.py`
 
 ## Single-Market Comparison Set
 
@@ -54,7 +56,7 @@ Polymarket:
 
 Default chart readability settings for this comparison set:
 
-- Kalshi and Polymarket chart prices are full-density by default (no resample).
+- Kalshi and Polymarket chart prices stay full-density until the legacy chart path needs to downsample large datasets.
 - Set `CHART_RESAMPLE_RULE` if you want smoother chart lines for debugging.
 - Polymarket defaults use a lower-activity public market so the public trades API
   stays within its historical offset ceiling while still producing non-flat charts.
@@ -65,3 +67,5 @@ Default chart readability settings for this comparison set:
 - Keep strategy classes in the shared prediction-market strategy package.
 - Keep shared single-market defaults in `_defaults.py` and import them from scripts.
 - Avoid helper duplication across scripts; prefer shared utilities.
+- Private runners can live under nested folders such as `private_strategies/`; the backtest menu discovers them recursively.
+- Multi-market scripts should prefer one legacy Bokeh multi-market HTML report instead of concatenated per-market pages.

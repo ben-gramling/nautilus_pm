@@ -38,6 +38,18 @@ from nautilus_trader.examples.strategies.prediction_market.ema_crossover import 
 from nautilus_trader.examples.strategies.prediction_market.ema_crossover import (
     TradeTickEMACrossoverStrategy,
 )
+from nautilus_trader.examples.strategies.prediction_market.final_period_momentum import (
+    BarFinalPeriodMomentumConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market.final_period_momentum import (
+    BarFinalPeriodMomentumStrategy,
+)
+from nautilus_trader.examples.strategies.prediction_market.final_period_momentum import (
+    TradeTickFinalPeriodMomentumConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market.final_period_momentum import (
+    TradeTickFinalPeriodMomentumStrategy,
+)
 from nautilus_trader.examples.strategies.prediction_market.mean_reversion import (
     BarMeanReversionConfig,
 )
@@ -70,6 +82,18 @@ from nautilus_trader.examples.strategies.prediction_market.rsi_reversion import 
 from nautilus_trader.examples.strategies.prediction_market.rsi_reversion import (
     TradeTickRSIReversionStrategy,
 )
+from nautilus_trader.examples.strategies.prediction_market.threshold_momentum import (
+    BarThresholdMomentumConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market.threshold_momentum import (
+    BarThresholdMomentumStrategy,
+)
+from nautilus_trader.examples.strategies.prediction_market.threshold_momentum import (
+    TradeTickThresholdMomentumConfig,
+)
+from nautilus_trader.examples.strategies.prediction_market.threshold_momentum import (
+    TradeTickThresholdMomentumStrategy,
+)
 from nautilus_trader.examples.strategies.prediction_market.vwap_reversion import (
     TradeTickVWAPReversionConfig,
 )
@@ -83,6 +107,8 @@ __all__ = [
     "BarBreakoutStrategy",
     "BarEMACrossoverConfig",
     "BarEMACrossoverStrategy",
+    "BarFinalPeriodMomentumConfig",
+    "BarFinalPeriodMomentumStrategy",
     "BarMeanReversionConfig",
     "BarMeanReversionStrategy",
     "BarPanicFadeConfig",
@@ -95,12 +121,18 @@ __all__ = [
     "TradeTickDeepValueHoldStrategy",
     "TradeTickEMACrossoverConfig",
     "TradeTickEMACrossoverStrategy",
+    "TradeTickFinalPeriodMomentumConfig",
+    "TradeTickFinalPeriodMomentumStrategy",
     "TradeTickMeanReversionConfig",
     "TradeTickMeanReversionStrategy",
     "TradeTickPanicFadeConfig",
     "TradeTickPanicFadeStrategy",
     "TradeTickRSIReversionConfig",
     "TradeTickRSIReversionStrategy",
+    "BarThresholdMomentumConfig",
+    "BarThresholdMomentumStrategy",
+    "TradeTickThresholdMomentumConfig",
+    "TradeTickThresholdMomentumStrategy",
     "TradeTickVWAPReversionConfig",
     "TradeTickVWAPReversionStrategy",
 ]

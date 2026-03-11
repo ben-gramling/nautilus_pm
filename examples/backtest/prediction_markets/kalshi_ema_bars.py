@@ -183,40 +183,6 @@ def run_backtest() -> None:
         print(engine.trader.generate_order_fills_report())  # pyright: ignore[reportOptionalMemberAccess]
         print(engine.trader.generate_positions_report())  # pyright: ignore[reportOptionalMemberAccess]
 
-    # Generate interactive tearsheet (requires: pip install "plotly>=6.3.1")
-    try:
-        from nautilus_trader.analysis import TearsheetConfig
-        from nautilus_trader.analysis.tearsheet import create_tearsheet
-
-        print("\nGenerating tearsheet...")
-        # Themes: "plotly_white", "plotly_dark", "nautilus", "nautilus_dark"
-        tearsheet_config = TearsheetConfig(theme="plotly_white")
-        create_tearsheet(
-            engine=engine,
-            output_path="kalshi_tearsheet.html",
-            config=tearsheet_config,
-        )
-        print("Tearsheet saved to kalshi_tearsheet.html")
-    except ImportError:
-        print("\nSkipping tearsheet (plotly not installed: pip install 'plotly>=6.3.1')")
-
-    # Generate interactive tearsheet (requires: pip install "plotly>=6.3.1")
-    try:
-        from nautilus_trader.analysis import TearsheetConfig
-        from nautilus_trader.analysis.tearsheet import create_tearsheet
-
-        print("\nGenerating tearsheet...")
-        # Themes: "plotly_white", "plotly_dark", "nautilus", "nautilus_dark"
-        tearsheet_config = TearsheetConfig(theme="plotly_white")
-        create_tearsheet(
-            engine=engine,
-            output_path="kalshi_tearsheet.html",
-            config=tearsheet_config,
-        )
-        print("Tearsheet saved to kalshi_tearsheet.html")
-    except ImportError:
-        print("\nSkipping tearsheet (plotly not installed: pip install 'plotly>=6.3.1')")
-
     node.dispose()
 
 
