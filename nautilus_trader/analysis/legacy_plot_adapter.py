@@ -795,8 +795,8 @@ def _append_brier_placeholder_panel(layout: Any, message: str) -> Any:
 
 def _style_panel_legend(fig: Any) -> None:
     for legend in getattr(fig, "legend", []):
-        legend.border_line_width = 1
-        legend.border_line_color = "#333333"
+        legend.location = "top_left"
+        legend.border_line_alpha = 0
         legend.padding = 5
         legend.spacing = 0
         legend.margin = 0
@@ -890,8 +890,6 @@ def _append_brier_panel(layout: Any, brier_frame: pd.DataFrame) -> Any:
     fig.xaxis.axis_label = "Date"
     fig.yaxis.axis_label = "Cumulative Brier Advantage"
     fig.yaxis.formatter = NumeralTickFormatter(format="0.0000")
-    fig.legend.location = "top_center"
-    fig.legend.orientation = "horizontal"
     _style_panel_legend(fig)
     wheel_zoom = next((tool for tool in fig.tools if isinstance(tool, WheelZoomTool)), None)
     if wheel_zoom is not None:
@@ -1484,8 +1482,6 @@ def _append_multi_market_brier_panel(
     fig.xaxis.axis_label = "Date"
     fig.yaxis.axis_label = axis_label
     fig.yaxis.formatter = NumeralTickFormatter(format="0.0000")
-    fig.legend.location = "top_center"
-    fig.legend.orientation = "horizontal"
     _style_panel_legend(fig)
     wheel_zoom = next((tool for tool in fig.tools if isinstance(tool, WheelZoomTool)), None)
     if wheel_zoom is not None:
