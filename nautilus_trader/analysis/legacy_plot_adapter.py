@@ -796,6 +796,7 @@ def _append_brier_placeholder_panel(layout: Any, message: str) -> Any:
 def _style_panel_legend(fig: Any) -> None:
     for legend in getattr(fig, "legend", []):
         legend.location = "top_left"
+        legend.orientation = "horizontal"
         legend.border_line_alpha = 0
         legend.padding = 5
         legend.spacing = 0
