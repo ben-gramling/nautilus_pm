@@ -15,3 +15,7 @@
 """
 Shared prediction-market adapter helpers.
 """
+
+from nautilus_trader.adapters.prediction_market.fill_model import PredictionMarketTakerFillModel
+
+__all__ = ["PredictionMarketTakerFillModel"]
