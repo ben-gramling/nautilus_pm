@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Backtest runner — interactive strategy menu.
+"""
+Backtest runner - interactive strategy menu.
 
-Discovers strategies in examples/backtest/ (and any directories listed in
+Discovers strategies recursively in examples/backtest/ and
+examples/backtest/prediction_markets/ (and any directories listed in
 the EXTRA_STRATEGIES_DIRS environment variable) that expose:
 
-    NAME        str   — display name shown in the menu
-    DESCRIPTION str   — one-line description shown in the menu
-    run()       async — entry point called when the strategy is selected
+    NAME        str   - display name shown in the menu
+    DESCRIPTION str   - one-line description shown in the menu
+    run()       async - entry point called when the strategy is selected
 
 Run via:
     .venv/bin/python main.py
@@ -20,6 +22,7 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
+
 
 # ---------------------------------------------------------------------------
 # sys.path: wheel takes priority for compiled extensions, but we extend
@@ -37,6 +40,7 @@ if str(_REPO_ROOT) in sys.path:
 
 import nautilus_trader.adapters as _nt_adapters  # noqa: E402
 
+
 _LOCAL_ADAPTERS = _REPO_ROOT / "nautilus_trader" / "adapters"
 if str(_LOCAL_ADAPTERS) not in _nt_adapters.__path__:
     _nt_adapters.__path__.insert(0, str(_LOCAL_ADAPTERS))
@@ -44,12 +48,24 @@ if str(_LOCAL_ADAPTERS) not in _nt_adapters.__path__:
 
 # Directories to scan. EXTRA_STRATEGIES_DIRS can be a colon-separated list of
 # additional paths (e.g. strategies from a sibling repo).
-STRATEGIES_DIRS: list[Path] = [_REPO_ROOT / "examples" / "backtest"]
+_DEFAULT_STRATEGY_DIRS: list[Path] = [
+    _REPO_ROOT / "examples" / "backtest",
+    _REPO_ROOT / "examples" / "backtest" / "prediction_markets",
+]
+_EXTRA_STRATEGY_DIRS = [
+    Path(extra.strip())
+    for extra in os.environ.get("EXTRA_STRATEGIES_DIRS", "").split(":")
+    if extra.strip()
+]
 
-for _extra in os.environ.get("EXTRA_STRATEGIES_DIRS", "").split(":"):
-    _extra = _extra.strip()
-    if _extra:
-        STRATEGIES_DIRS.append(Path(_extra))
+STRATEGIES_DIRS: list[Path] = []
+_seen_dirs: set[Path] = set()
+for strategy_dir in _DEFAULT_STRATEGY_DIRS + _EXTRA_STRATEGY_DIRS:
+    resolved = strategy_dir.expanduser().resolve()
+    if resolved in _seen_dirs:
+        continue
+    _seen_dirs.add(resolved)
+    STRATEGIES_DIRS.append(resolved)
 
 # ---------------------------------------------------------------------------
 
@@ -59,15 +75,41 @@ CYAN = "\033[36m"
 RESET = "\033[0m"
 
 
+def _strategy_import_parents(path: Path) -> list[str]:
+    parents: list[str] = []
+    for strategy_root in STRATEGIES_DIRS:
+        try:
+            path.relative_to(strategy_root)
+        except ValueError:
+            continue
+
+        current = path.parent
+        while True:
+            current_str = str(current)
+            if current_str not in parents:
+                parents.append(current_str)
+            if current == strategy_root:
+                break
+            current = current.parent
+        break
+
+    if not parents:
+        parents.append(str(path.parent))
+    return parents
+
+
+def _module_name_for_path(path: Path) -> str:
+    rel = path.resolve().relative_to(_REPO_ROOT.resolve())
+    return "strategy_" + "_".join(rel.with_suffix("").parts)
+
+
 def _load_strategy(path: Path) -> dict | None:
     """Load a strategy module by file path and return its menu entry, or None."""
-    # Ensure the file's directory is importable (for sibling imports like
-    # `from kalshi_spread_strategy import ...`).
-    parent = str(path.parent)
-    if parent not in sys.path:
-        sys.path.insert(0, parent)
+    for parent in reversed(_strategy_import_parents(path)):
+        if parent not in sys.path:
+            sys.path.insert(0, parent)
     try:
-        spec = importlib.util.spec_from_file_location(path.stem, path)
+        spec = importlib.util.spec_from_file_location(_module_name_for_path(path), path)
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
     except Exception as exc:
@@ -85,12 +127,17 @@ def _load_strategy(path: Path) -> dict | None:
 def discover() -> list[dict]:
     """Scan strategy directories for modules that expose NAME, DESCRIPTION, and run()."""
     found = []
+    seen_paths: set[Path] = set()
     for strats_dir in STRATEGIES_DIRS:
         if not strats_dir.exists():
             continue
-        for path in sorted(strats_dir.glob("*.py")):
-            if path.name.startswith("_"):
+        for path in sorted(strats_dir.rglob("*.py")):
+            if path.name.startswith("_") or "__pycache__" in path.parts:
                 continue
+            resolved = path.resolve()
+            if resolved in seen_paths:
+                continue
+            seen_paths.add(resolved)
             strategy = _load_strategy(path)
             if strategy:
                 found.append(strategy)

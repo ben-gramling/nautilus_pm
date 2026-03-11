@@ -103,6 +103,7 @@ GEMINI.md
 /output/
 /*.html
 /kalshi_catalog/
+/examples/backtest/prediction_markets/private_strategies/
 
 # Nautilus specific
 .ipynb_checkpoints/

@@ -44,7 +44,7 @@ KALSHI_TAKER_FEE_RATE = decimal.Decimal("0.07")
 # Kalshi maker fee rate.  Most markets have zero maker fees; markets that
 # do charge a maker fee are noted in the fee schedule PDF.  Set to zero by
 # default; override per-market via ``fee_waiver_expiration_time`` check.
-KALSHI_MAKER_FEE_RATE = decimal.Decimal("0")
+KALSHI_MAKER_FEE_RATE = decimal.Decimal(0)
 
 
 def calculate_kalshi_commission(
@@ -58,7 +58,7 @@ def calculate_kalshi_commission(
     Kalshi charges a variable percentage of the expected earnings on each
     contract, rounded **up** to the next cent::
 
-        fee = ceil_to_cent(fee_rate × C × P × (1 - P))
+        fee = ceil_to_cent(fee_rate x C x P x (1 - P))
 
     Where:
     - C = number of contracts (quantity)
@@ -66,8 +66,8 @@ def calculate_kalshi_commission(
     - fee_rate = 0.07 (7%) for the standard taker fee schedule
 
     The fee peaks at P = 0.50 and decreases symmetrically toward the
-    extremes (P → 0 or P → 1).  At P = 0.50, the effective rate is
-    ~1.75% of notional (= 0.07 × 0.25).
+    extremes (P -> 0 or P -> 1).  At P = 0.50, the effective rate is
+    ~1.75% of notional (= 0.07 x 0.25).
 
     References
     ----------
@@ -96,7 +96,7 @@ def calculate_kalshi_commission(
     return decimal.Decimal(str(math.ceil(raw_fee * 100) / 100))
 
 
-def market_dict_to_instrument(market: dict) -> BinaryOption:
+def _market_dict_to_instrument(market: dict) -> BinaryOption:
     """Convert a Kalshi market dict to a NautilusTrader ``BinaryOption``."""
     ticker = market["ticker"]
     venue = Venue("KALSHI")
@@ -128,9 +128,7 @@ def market_dict_to_instrument(market: dict) -> BinaryOption:
         asset_class=AssetClass.ALTERNATIVE,
         currency=Currency.from_str("USD"),
         activation_ns=parse_ts(market.get("open_time")),
-        expiration_ns=parse_ts(
-            market.get("close_time") or market.get("latest_expiration_time")
-        ),
+        expiration_ns=parse_ts(market.get("close_time") or market.get("latest_expiration_time")),
         price_precision=4,
         size_precision=2,
         price_increment=Price.from_str("0.0001"),
@@ -141,7 +139,12 @@ def market_dict_to_instrument(market: dict) -> BinaryOption:
         description=market.get("title"),
         ts_event=0,
         ts_init=0,
+        info=market,
     )
+
+
+# Backward-compatibility alias used by loaders/examples.
+market_dict_to_instrument = _market_dict_to_instrument
 
 
 class _KalshiHttpClient:
@@ -167,8 +170,7 @@ class _KalshiHttpClient:
             self._client = httpx.AsyncClient(base_url=base_url, timeout=60)
         except ImportError as exc:
             raise RuntimeError(
-                "httpx is required for KalshiInstrumentProvider; "
-                "install it with: pip install httpx"
+                "httpx is required for KalshiInstrumentProvider; install it with: pip install httpx"
             ) from exc
 
     async def get_markets(
@@ -263,4 +265,4 @@ class KalshiInstrumentProvider(InstrumentProvider):
 
     def _market_to_instrument(self, market: dict) -> BinaryOption:
         """Convert a Kalshi market dict to a NautilusTrader ``BinaryOption``."""
-        return market_dict_to_instrument(market)
+        return _market_dict_to_instrument(market)
